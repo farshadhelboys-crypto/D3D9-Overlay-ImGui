@@ -11,6 +11,10 @@
 #include "UI.h"
 #include "esp.h"
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 // ---------------- OFFSETS ----------------
 namespace Off {
     constexpr uintptr_t ENTITY_ARRAY_PTR = 0x25B9390;
@@ -79,7 +83,6 @@ static uintptr_t GetModuleBase(DWORD pid, const wchar_t* mod) {
     MODULEENTRY32W me{ sizeof(me) };
     uintptr_t base = 0;
 
-    // IMPORTANT: must call Module32FirstW before Module32NextW
     if (Module32FirstW(s, &me)) {
         do {
             if (_wcsicmp(me.szModule, mod) == 0) {
@@ -209,16 +212,90 @@ static void DrawHealthBar(ImDrawList* dl, float bx, float by, float w, float h,
 }
 
 // =====================================================================
+//  Rotating "F ESP" logo (top-left corner)
+// =====================================================================
+static int   g_RotateStartIdx = -1;
+
+static void ImRotateStart(ImDrawList* dl) {
+    g_RotateStartIdx = dl->VtxBuffer.Size;
+}
+
+static ImVec2 ImRotationCenter(ImDrawList* dl) {
+    ImVec2 l(FLT_MAX, FLT_MAX), u(-FLT_MAX, -FLT_MAX);
+    const ImDrawVert* vert = &dl->VtxBuffer.Data[g_RotateStartIdx];
+    for (int i = g_RotateStartIdx; i < dl->VtxBuffer.Size; i++, vert++) {
+        l = ImMin(l, vert->pos);
+        u = ImMax(u, vert->pos);
+    }
+    return ImVec2((l.x + u.x) * 0.5f, (l.y + u.y) * 0.5f);
+}
+
+static void ImRotateEnd(ImDrawList* dl, float rad, ImVec2 center) {
+    float s = sinf(rad), c = cosf(rad);
+    center = ImRotate(center, s, c) - center;
+    for (int i = g_RotateStartIdx; i < dl->VtxBuffer.Size; i++) {
+        ImDrawVert& v = dl->VtxBuffer.Data[i];
+        v.pos = ImRotate(v.pos, s, c) - center;
+    }
+}
+
+static void DrawRotatingLogo() {
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    if (!dl) return;
+
+    // Position: top-left corner of the game overlay
+    const float posX = 28.0f;
+    const float posY = 28.0f;
+    const float radius = 22.0f;
+
+    // Continuous 360 rotation (~1 full turn every ~3 seconds)
+    const float angle = (float)ImGui::GetTime() * 2.1f;  // radians
+
+    // Soft glow circle behind text
+    dl->AddCircleFilled(ImVec2(posX, posY), radius + 4.0f, IM_COL32(0, 0, 0, 120), 32);
+    dl->AddCircle(ImVec2(posX, posY), radius + 2.0f, IM_COL32(60, 180, 255, 180), 32, 1.5f);
+
+    // Rotating ring
+    const int segments = 48;
+    for (int i = 0; i < segments; ++i) {
+        float a0 = angle + (float)i / segments * 2.0f * (float)M_PI;
+        float a1 = angle + (float)(i + 1) / segments * 2.0f * (float)M_PI;
+        float alpha = 80 + (int)(120 * (0.5f + 0.5f * sinf(a0 * 2.0f)));
+        dl->AddLine(
+            ImVec2(posX + cosf(a0) * radius, posY + sinf(a0) * radius),
+            ImVec2(posX + cosf(a1) * radius, posY + sinf(a1) * radius),
+            IM_COL32(80, 200, 255, alpha), 2.0f);
+    }
+
+    // Rotating text "F ESP"
+    const char* text = "F ESP";
+    ImFont* font = ImGui::GetFont();
+    float fontSize = 14.0f;   // small readable size
+
+    ImRotateStart(dl);
+    ImVec2 textSize = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, text);
+    ImVec2 textPos(posX - textSize.x * 0.5f, posY - textSize.y * 0.5f);
+
+    // Shadow for readability
+    dl->AddText(font, fontSize, ImVec2(textPos.x + 1, textPos.y + 1),
+                IM_COL32(0, 0, 0, 200), text);
+    // Main text (cyan)
+    dl->AddText(font, fontSize, textPos, IM_COL32(100, 220, 255, 255), text);
+
+    ImRotateEnd(dl, angle, ImVec2(posX, posY));
+}
+
+// =====================================================================
 //  RENDER MENU (only when INSERT pressed)
 // =====================================================================
 void RenderESPMenu() {
     if (!UI::IsWindowTargeted()) return;
 
     ImGui::SetNextWindowSize(ImVec2(370, 760), ImGuiCond_FirstUseEver);
-    ImGui::Begin("Farshad pm Esp", nullptr, ImGuiWindowFlags_NoCollapse);
+    ImGui::Begin("farshad pm Esp", nullptr, ImGuiWindowFlags_NoCollapse);
 
     // Header / branding
-    ImGui::TextColored(ImVec4(0.40f, 0.85f, 1.00f, 1.00f), "Farshad pm Esp");
+    ImGui::TextColored(ImVec4(0.40f, 0.85f, 1.00f, 1.00f), "farshad pm Esp");
     ImGui::SameLine();
     ImGui::TextDisabled("v1.0");
     ImGui::Separator();
@@ -317,6 +394,10 @@ void RenderESPMenu() {
 //  RENDER BOXES (always, when target set & ESP enabled)
 // =====================================================================
 void RenderESPBoxes() {
+    // Always draw the spinning logo when a target window is set
+    if (UI::IsWindowTargeted())
+        DrawRotatingLogo();
+
     // Detect target window change
     if (UI::GetTargetWindow() != g_lastTarget) {
         g_lastTarget = UI::GetTargetWindow();
