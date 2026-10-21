@@ -1,6 +1,8 @@
 #include "UI.h"
 #include "Drawing.h"
 
+extern void RenderESP();   // <-- ADDED
+
 LPDIRECT3DDEVICE9 UI::pD3DDevice = nullptr;
 LPDIRECT3D9 UI::pD3D = nullptr;
 D3DPRESENT_PARAMETERS UI::D3Dpp = {};
@@ -13,17 +15,11 @@ DWORD UI::dTargetPID = 0;
 
 HMODULE UI::hCurrentModule = nullptr;
 
-/**
-    @brief : Function that create a D3D9 device.
-    @param  hWnd : HWND of the created window.
-    @retval : true if the function succeed else false.
-**/
 bool UI::CreateDeviceD3D(const HWND hWnd)
 {
     if ((pD3D = Direct3DCreate9(D3D_SDK_VERSION)) == nullptr)
         return false;
 
-    // Create the D3DDevice
     ZeroMemory(&D3Dpp, sizeof(D3Dpp));
     D3Dpp.Windowed = TRUE;
     D3Dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
@@ -38,12 +34,9 @@ bool UI::CreateDeviceD3D(const HWND hWnd)
 }
 
 #ifndef WM_DPICHANGED
-#define WM_DPICHANGED 0x02E0 // From Windows SDK 8.1+ headers
+#define WM_DPICHANGED 0x02E0
 #endif
 
-/**
-    @brief : Window message handler (https://learn.microsoft.com/en-us/windows/win32/api/winuser/nc-winuser-wndproc).
-**/
 LRESULT WINAPI UI::WndProc(const HWND hWnd, const UINT msg, const WPARAM wParam, const LPARAM lParam)
 {
     if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
@@ -54,7 +47,7 @@ LRESULT WINAPI UI::WndProc(const HWND hWnd, const UINT msg, const WPARAM wParam,
     case WM_SIZE:
         if (wParam == SIZE_MINIMIZED)
             return 0;
-        g_ResizeWidth = (UINT)LOWORD(lParam); // Queue resize
+        g_ResizeWidth = (UINT)LOWORD(lParam);
         g_ResizeHeight = (UINT)HIWORD(lParam);
         return 0;
 
@@ -73,14 +66,10 @@ LRESULT WINAPI UI::WndProc(const HWND hWnd, const UINT msg, const WPARAM wParam,
     return ::DefWindowProc(hWnd, msg, wParam, lParam);
 }
 
-/**
-    @brief : Function that create the overlay window and more.
-**/
 void UI::Render()
 {
     ImGui_ImplWin32_EnableDpiAwareness();
 
-    // Get the main window of the process when overlay as DLL
     #ifdef _WINDLL
     if (hTargetWindow == nullptr)
         GetWindow();
@@ -125,7 +114,6 @@ void UI::Render()
 
     ImGui::StyleColorsDark();
 
-    // Scale the font size depending of the screen size.
     const HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
     MONITORINFO info = {};
     info.cbSize = sizeof(MONITORINFO);
@@ -165,7 +153,6 @@ void UI::Render()
         if (GetAsyncKeyState(VK_END) & 1)
             bDone = true;
 
-        // Check if the targeted window is still up.
         if (!IsWindowAlive() && bTargetSet)
             bDone = true;
 
@@ -180,7 +167,6 @@ void UI::Render()
             ResetDevice();
         }
 
-        // Move the window on top of the targeted window and handle resize.
         #ifdef _WINDLL 
         if (hTargetWindow != nullptr)
             MoveWindow(hwnd);
@@ -191,7 +177,6 @@ void UI::Render()
             MoveWindow(hwnd);
         #endif
 
-        // Clear overlay when the targeted window is not focus
         if (!IsWindowFocus(hwnd) && bTargetSet)
         {
             pD3DDevice->SetRenderState(D3DRS_ZENABLE, FALSE);
@@ -205,7 +190,6 @@ void UI::Render()
 
             const HRESULT result = pD3DDevice->Present(nullptr, nullptr, nullptr, nullptr);
 
-            // Handle loss of D3D9 device
             if (result == D3DERR_DEVICELOST && pD3DDevice->TestCooperativeLevel() == D3DERR_DEVICENOTRESET)
                 ResetDevice();
 
@@ -217,10 +201,10 @@ void UI::Render()
         ImGui::NewFrame();
         {
             Drawing::Draw();
+            RenderESP();          // <-- ADDED HERE
         }
         ImGui::EndFrame();
 
-        // Overlay handle inputs when menu is showed.
         if (Drawing::isActive())
             SetWindowLong(hwnd, GWL_EXSTYLE, WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TOOLWINDOW);
         else
@@ -235,7 +219,6 @@ void UI::Render()
         const D3DCOLOR clear_col_dx = D3DCOLOR_RGBA((int)(clear_color.x * clear_color.w * 255.0f), (int)(clear_color.y * clear_color.w * 255.0f), (int)(clear_color.z * clear_color.w * 255.0f), (int)(clear_color.w * 255.0f));
         pD3DDevice->Clear(0, nullptr, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, clear_col_dx, 1.0f, 0);
 
-        // Draw figure with DirectX
         if (IsWindowTargeted())
             Drawing::DXDraw(pD3DDevice);
 
@@ -248,7 +231,6 @@ void UI::Render()
 
         const HRESULT result = pD3DDevice->Present(nullptr, nullptr, nullptr, nullptr);
 
-        // Handle loss of D3D9 device
         if (result == D3DERR_DEVICELOST && pD3DDevice->TestCooperativeLevel() == D3DERR_DEVICENOTRESET)
             ResetDevice();
     }
@@ -270,9 +252,6 @@ void UI::Render()
 #endif
 }
 
-/**
-    @brief : Reset the current D3D9 device.
-**/
 void UI::ResetDevice()
 {
     ImGui_ImplDX9_InvalidateDeviceObjects();
@@ -282,31 +261,17 @@ void UI::ResetDevice()
     ImGui_ImplDX9_CreateDeviceObjects();
 }
 
-/**
-    @brief : Release the D3D9 device and object.
-**/
 void UI::CleanupDeviceD3D()
 {
     if (pD3DDevice) { pD3DDevice->Release(); pD3DDevice = nullptr; }
     if (pD3D) { pD3D->Release(); pD3D = nullptr; }
 }
 
-
-/**
-    @brief : Function that retrieve the main window of the process.
-             This function is only called when the overlay is build as DLL.
-**/
 void UI::GetWindow()
 {
     EnumWindows(EnumWind, NULL);
 }
 
-/**
-    @brief : Callback function that retrive the main window of the process.
-             This function is only called when the overlay is build as DLL.
-             (https://learn.microsoft.com/fr-fr/windows/win32/api/winuser/nf-winuser-enumwindows)
-    
-**/
 BOOL CALLBACK UI::EnumWind(const HWND hWindow, const LPARAM lPrams)
 {
     DWORD procID;
@@ -321,10 +286,6 @@ BOOL CALLBACK UI::EnumWind(const HWND hWindow, const LPARAM lPrams)
     return FALSE;
 }
 
-/**
-    @brief : Function that move the overlay on top of the targeted window.
-    @param hCurrentProcessWindow : Window of the overlay.
-**/
 void UI::MoveWindow(const HWND hCurrentProcessWindow)
 {
     RECT rect;
@@ -342,11 +303,6 @@ void UI::MoveWindow(const HWND hCurrentProcessWindow)
     SetWindowPos(hCurrentProcessWindow, nullptr, rect.left, rect.top, lWindowWidth, lWindowHeight, SWP_SHOWWINDOW);
 }
 
-/**
-    @brief : Function that check if the overlay window or the targeted window is focus.
-    @param  hCurrentProcessWindow : Window of the overlay.
-    @retval : TRUE if one of the window is focus else FALSE. 
-**/
 BOOL UI::IsWindowFocus(const HWND hCurrentProcessWindow)
 {
     char lpCurrentWindowUsedClass[125];
@@ -372,29 +328,17 @@ BOOL UI::IsWindowFocus(const HWND hCurrentProcessWindow)
     return TRUE;
 }
 
-/**
-    @brief : function that check if a target window is set.
-    @retval : TRUE if a target window has been setted else FALSE.
-**/
 BOOL UI::IsWindowTargeted()
 {
     return bTargetSet;
 }
 
-/**
-    @brief : Function that clear the current window list and enumerate all windows.
-    @param vWindowList : pointer of the WindowItem vector.
-**/
 void UI::GetAllWindow(std::vector<WindowItem>* vWindowList)
 {
     vWindowList->clear();
     EnumWindows(EnumAllWind, (LPARAM)vWindowList);
 }
 
-/**
-    @brief : Callback function that retrive all the valid window and get processname, pid and window title.
-             (https://learn.microsoft.com/fr-fr/windows/win32/api/winuser/nf-winuser-enumwindows)
-**/
 BOOL CALLBACK UI::EnumAllWind(const HWND hWindow, const LPARAM lPrams)
 {
     if (!IsWindowValid(hWindow))
@@ -407,7 +351,7 @@ BOOL CALLBACK UI::EnumAllWind(const HWND hWindow, const LPARAM lPrams)
 
     if (strlen(CurrentWindowItem.CurrentWindowTitle) == 0)
         return TRUE;
-        
+
     GetWindowThreadProcessId(hWindow, &procID);
     GetProcessName(CurrentWindowItem.CurrentProcessName, procID);
 
@@ -418,12 +362,6 @@ BOOL CALLBACK UI::EnumAllWind(const HWND hWindow, const LPARAM lPrams)
     return TRUE;
 }
 
-
-/**
-    @brief : Function that retrieve the process name from the PID.
-    @param lpProcessName : pointer to the string that store the process name.
-    @param dPID : PID of the process.
-**/
 void UI::GetProcessName(const LPSTR lpProcessName, const DWORD dPID)
 {
     char lpCurrentProcessName[125];
@@ -437,7 +375,6 @@ void UI::GetProcessName(const LPSTR lpProcessName, const DWORD dPID)
 
     if (!Process32First(hProcList, &ProcList))
         return;
-
 
     if (ProcList.th32ProcessID == dPID)
     {
@@ -457,11 +394,6 @@ void UI::GetProcessName(const LPSTR lpProcessName, const DWORD dPID)
     }
 }
 
-/**
-    @brief : Function that check if a window is valid.
-    @param  hCurrentWindow : window to be tested.
-    @retval : TRUE if the window is valid else FALSE.
-**/
 BOOL UI::IsWindowValid(const HWND hCurrentWindow)
 {
     DWORD styles, ex_styles;
@@ -485,11 +417,6 @@ BOOL UI::IsWindowValid(const HWND hCurrentWindow)
     return TRUE;
 }
 
-/**
-    @brief : Function that check if a window is cloacked.
-    @param  hCurrentWindow : window to be tested.
-    @retval : TRUE if the window is cloacked else FALSE.
-**/
 BOOL UI::IsWindowCloaked(const HWND hCurrentWindow)
 {
     DWORD cloaked;
@@ -498,11 +425,6 @@ BOOL UI::IsWindowCloaked(const HWND hCurrentWindow)
     return SUCCEEDED(hr) && cloaked;
 }
 
-/**
-    @brief : Setter function used to define the target window from the window picker.
-             This is used only when the overlay is build as an EXE.
-    @param hWindow : target window.
-**/
 void UI::SetTargetWindow(const HWND hWindow)
 {
     hTargetWindow = hWindow;
@@ -511,10 +433,6 @@ void UI::SetTargetWindow(const HWND hWindow)
     bTargetSet = TRUE;
 }
 
-/**
-    @brief : Function that look if the targeted window has been closed.
-    @retval : TRUE if the function is still up else FALSE.
-**/
 BOOL UI::IsWindowAlive()
 {
     DWORD dCurrentPID;
