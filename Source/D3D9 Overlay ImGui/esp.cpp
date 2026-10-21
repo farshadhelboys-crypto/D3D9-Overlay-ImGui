@@ -214,8 +214,14 @@ static void DrawHealthBar(ImDrawList* dl, float bx, float by, float w, float h,
 void RenderESPMenu() {
     if (!UI::IsWindowTargeted()) return;
 
-    ImGui::SetNextWindowSize(ImVec2(370, 720), ImGuiCond_FirstUseEver);
-    ImGui::Begin("ESP Settings", nullptr, ImGuiWindowFlags_NoCollapse);
+    ImGui::SetNextWindowSize(ImVec2(370, 760), ImGuiCond_FirstUseEver);
+    ImGui::Begin("Farshad pm Esp", nullptr, ImGuiWindowFlags_NoCollapse);
+
+    // Header / branding
+    ImGui::TextColored(ImVec4(0.40f, 0.85f, 1.00f, 1.00f), "Farshad pm Esp");
+    ImGui::SameLine();
+    ImGui::TextDisabled("v1.0");
+    ImGui::Separator();
 
     ImGui::Checkbox("Enable ESP", &cfg.enabled);
     ImGui::SameLine();
@@ -276,6 +282,32 @@ void RenderESPMenu() {
         ImGui::Text("Matrix OK: %s",     g_dbgVmOk ? "yes" : "no");
         ImGui::Text("LocalPtr : 0x%llX", (unsigned long long)g_localPtr);
         ImGui::Text("LocalTeam: %d",     g_localTeam);
+    }
+
+    // ---------- Contact / Telegram ----------
+    ImGui::Separator();
+    if (ImGui::CollapsingHeader("Contact", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Text("Telegram:");
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.30f, 0.70f, 1.00f, 1.00f), "@client_v34");
+
+        if (ImGui::Button("Open Telegram", ImVec2(-1, 0))) {
+            ShellExecuteA(nullptr, "open", "https://t.me/client_v34", nullptr, nullptr, SW_SHOWNORMAL);
+        }
+
+        if (ImGui::Button("Copy @client_v34", ImVec2(-1, 0))) {
+            if (OpenClipboard(nullptr)) {
+                EmptyClipboard();
+                const char* text = "@client_v34";
+                HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, strlen(text) + 1);
+                if (hMem) {
+                    memcpy(GlobalLock(hMem), text, strlen(text) + 1);
+                    GlobalUnlock(hMem);
+                    SetClipboardData(CF_TEXT, hMem);
+                }
+                CloseClipboard();
+            }
+        }
     }
 
     ImGui::End();
