@@ -65,6 +65,56 @@ LRESULT WINAPI UI::WndProc(const HWND hWnd, const UINT msg, const WPARAM wParam,
     return ::DefWindowProc(hWnd, msg, wParam, lParam);
 }
 
+// Load a system font that supports Persian (Arabic script)
+static void LoadUIFont()
+{
+    ImGuiIO& io = ImGui::GetIO();
+
+    // Glyph ranges: Latin + Arabic/Persian
+    static const ImWchar ranges[] = {
+        0x0020, 0x00FF, // Basic Latin + Latin Supplement
+        0x0600, 0x06FF, // Arabic
+        0x0750, 0x077F, // Arabic Supplement
+        0x08A0, 0x08FF, // Arabic Extended-A
+        0xFB50, 0xFDFF, // Arabic Presentation Forms-A
+        0xFE70, 0xFEFF, // Arabic Presentation Forms-B
+        0,
+    };
+
+    ImFontConfig cfg;
+    cfg.OversampleH = 2;
+    cfg.OversampleV = 1;
+    cfg.PixelSnapH = true;
+
+    const HMONITOR monitor = MonitorFromWindow(nullptr, MONITOR_DEFAULTTOPRIMARY);
+    MONITORINFO info = {};
+    info.cbSize = sizeof(MONITORINFO);
+    GetMonitorInfo(monitor, &info);
+    const int monitor_height = info.rcMonitor.bottom - info.rcMonitor.top;
+    const float fontSize = (monitor_height > 1080) ? 20.0f : 16.0f;
+
+    // Try common Windows fonts with Persian support (first that exists wins)
+    const char* fontPaths[] = {
+        "C:\\Windows\\Fonts\\tahoma.ttf",
+        "C:\\Windows\\Fonts\\segoeui.ttf",
+        "C:\\Windows\\Fonts\\arial.ttf",
+        "C:\\Windows\\Fonts\\micross.ttf", // Microsoft Sans Serif
+    };
+
+    ImFont* font = nullptr;
+    for (const char* path : fontPaths)
+    {
+        if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES)
+        {
+            font = io.Fonts->AddFontFromFileTTF(path, fontSize, &cfg, ranges);
+            if (font) break;
+        }
+    }
+
+    if (!font)
+        io.Fonts->AddFontDefault();
+}
+
 void UI::Render()
 {
     ImGui_ImplWin32_EnableDpiAwareness();
@@ -76,7 +126,7 @@ void UI::Render()
 
     WNDCLASSEX wc{};
     wc.cbSize = sizeof(WNDCLASSEX);
-    wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH); // no leak (stock object)
+    wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
     wc.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
     wc.hIconSm = LoadIcon(nullptr, IDI_APPLICATION);
@@ -118,19 +168,8 @@ void UI::Render()
 
     ImGui::StyleColorsDark();
 
-    const HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-    MONITORINFO info = {};
-    info.cbSize = sizeof(MONITORINFO);
-    GetMonitorInfo(monitor, &info);
-    const int monitor_height = info.rcMonitor.bottom - info.rcMonitor.top;
-
-    if (monitor_height > 1080)
-    {
-        const float fScale = 2.0f;
-        ImFontConfig cfg;
-        cfg.SizePixels = 13 * fScale;
-        ImGui::GetIO().Fonts->AddFontDefault(&cfg);
-    }
+    // Font with Persian support
+    LoadUIFont();
 
     ImGui::GetIO().IniFilename = nullptr;
 
@@ -204,7 +243,6 @@ void UI::Render()
             continue;
         }
 
-        // Correct ImGui frame sequence
         ImGui_ImplDX9_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
@@ -213,7 +251,6 @@ void UI::Render()
 
         ImGui::EndFrame();
 
-        // Toggle click-through based on menu visibility
         if (Drawing::isActive())
             SetWindowLong(hwnd, GWL_EXSTYLE, WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TOOLWINDOW);
         else
@@ -398,7 +435,7 @@ void UI::GetProcessName(const LPSTR lpProcessName, const DWORD dPID)
         }
     } while (Process32Next(hProcList, &ProcList));
 
-    CloseHandle(hProcList); // was leaking every call
+    CloseHandle(hProcList);
 }
 
 BOOL UI::IsWindowValid(const HWND hCurrentWindow)

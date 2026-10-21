@@ -1,5 +1,5 @@
 // =====================================================================
-//  ESP - Integrated with UI / Drawing framework
+//  ESP - Integrated with UI / Drawing framework (EN / FA bilingual)
 // =====================================================================
 #include <Windows.h>
 #include <TlHelp32.h>
@@ -12,11 +12,55 @@
 #include "UI.h"
 #include "esp.h"
 
-#pragma comment(lib, "shell32.lib")  // ShellExecuteA for Telegram button
+#pragma comment(lib, "shell32.lib")
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
+
+// ---------------- LANGUAGE ----------------
+enum class Lang { EN = 0, FA = 1 };
+static Lang g_lang = Lang::EN;
+
+struct Loc {
+    const char* en;
+    const char* fa;
+    const char* operator()() const { return g_lang == Lang::FA ? fa : en; }
+};
+
+// All UI strings (UTF-8)
+static const Loc L_Title        = { "farshad pm Esp",           "farshad pm Esp" };
+static const Loc L_Language     = { "Language",                 "زبان" };
+static const Loc L_EnableESP    = { "Enable ESP",               "فعال‌سازی ESP" };
+static const Loc L_Reattach     = { "Re-attach",                "اتصال مجدد" };
+static const Loc L_Filters      = { "Filters",                  "فیلترها" };
+static const Loc L_TeamCheck    = { "Team Check",               "تشخیص تیم" };
+static const Loc L_MaxDist      = { "Max Distance",             "حداکثر فاصله" };
+static const Loc L_Visuals      = { "Visuals",                  "نمایش" };
+static const Loc L_Box          = { "Box",                      "باکس" };
+static const Loc L_Corners      = { "Corners",                  "گوشه‌ها" };
+static const Loc L_HealthBar    = { "Health Bar",               "نوار جون" };
+static const Loc L_Distance     = { "Distance",                 "فاصله" };
+static const Loc L_DrawLocal    = { "Draw Local Player",        "نمایش بازیکن خودم" };
+static const Loc L_BoxTuning    = { "Box Tuning",               "تنظیم باکس" };
+static const Loc L_Thickness    = { "Thickness",                "ضخامت" };
+static const Loc L_HeadOffset   = { "Head Offset",              "آفست سر" };
+static const Loc L_WidthRatio   = { "Width Ratio",              "نسبت عرض" };
+static const Loc L_Health       = { "Health Bar",               "نوار جون" };
+static const Loc L_MaxHP        = { "Max HP",                   "حداکثر HP" };
+static const Loc L_Side         = { "Side",                     "موقعیت" };
+static const Loc L_MatrixEntity = { "Matrix / Entity",          "ماتریس / موجودیت" };
+static const Loc L_MatrixSrc    = { "Matrix Source",            "منبع ماتریس" };
+static const Loc L_PtrArray     = { "Entity List = Pointer Array", "لیست موجودیت = آرایه اشاره‌گر" };
+static const Loc L_Colors       = { "Colors",                   "رنگ‌ها" };
+static const Loc L_Enemy        = { "Enemy",                    "دشمن" };
+static const Loc L_Mate         = { "Mate",                     "هم‌تیمی" };
+static const Loc L_Local        = { "Local",                    "خودم" };
+static const Loc L_Debug        = { "Debug",                    "دیباگ" };
+static const Loc L_Contact      = { "Contact",                  "ارتباط" };
+static const Loc L_Telegram     = { "Telegram:",                "تلگرام:" };
+static const Loc L_OpenTG       = { "Open Telegram",            "باز کردن تلگرام" };
+static const Loc L_CopyTG       = { "Copy @client_v34",         "کپی @client_v34" };
 
 // ---------------- OFFSETS ----------------
 namespace Off {
@@ -109,38 +153,42 @@ static void Detach() {
     g_dbgCount    = 0;
     g_dbgDrawn    = 0;
     g_dbgVmOk     = false;
-    strcpy_s(g_status, "Not attached");
+    strcpy_s(g_status, g_lang == Lang::FA ? "متصل نیست" : "Not attached");
 }
 
 static bool AttachFromUI() {
     Detach();
     if (!UI::IsWindowTargeted()) {
-        strcpy_s(g_status, "No target window");
+        strcpy_s(g_status, g_lang == Lang::FA ? "پنجره هدف انتخاب نشده" : "No target window");
         return false;
     }
     HWND  hwnd = UI::GetTargetWindow();
     DWORD pid  = UI::GetTargetPID();
     if (!pid && hwnd) GetWindowThreadProcessId(hwnd, &pid);
-    if (!pid) { strcpy_s(g_status, "Target PID invalid"); return false; }
+    if (!pid) {
+        strcpy_s(g_status, g_lang == Lang::FA ? "PID نامعتبر" : "Target PID invalid");
+        return false;
+    }
 
     g_hProc = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
     if (!g_hProc) {
-        strcpy_s(g_status, "OpenProcess failed (run as admin)");
+        strcpy_s(g_status, g_lang == Lang::FA ? "OpenProcess شکست (ادمین اجرا کن)" : "OpenProcess failed (run as admin)");
         return false;
     }
     g_gameBase = GetModuleBase(pid, L"clientmod_game.dll");
     if (!g_gameBase) {
-        strcpy_s(g_status, "clientmod_game.dll not loaded yet");
+        strcpy_s(g_status, g_lang == Lang::FA ? "clientmod_game.dll هنوز لود نشده" : "clientmod_game.dll not loaded yet");
         CloseHandle(g_hProc); g_hProc = nullptr;
         return false;
     }
     g_attachedPid = pid;
-    sprintf_s(g_status, "Attached: PID=%lu base=0x%llX",
-              (unsigned long)pid, (unsigned long long)g_gameBase);
+    if (g_lang == Lang::FA)
+        sprintf_s(g_status, "متصل شد: PID=%lu base=0x%llX", (unsigned long)pid, (unsigned long long)g_gameBase);
+    else
+        sprintf_s(g_status, "Attached: PID=%lu base=0x%llX", (unsigned long)pid, (unsigned long long)g_gameBase);
     return true;
 }
 
-// ---------------- LOCAL PLAYER ----------------
 static void UpdateLocal() {
     g_localTeam = 0;
     g_localPtr  = 0;
@@ -160,7 +208,6 @@ static void UpdateLocal() {
     if (RPM(lp + Off::OBJ_ORIGIN, o)) { g_localPos = o; g_haveLocal = true; }
 }
 
-// ---------------- W2S ----------------
 static bool WorldToScreen(const Vec3& w, Vec2& s, const Mat4& vm, float sw, float sh) {
     float clip = vm.m[3][0]*w.x + vm.m[3][1]*w.y + vm.m[3][2]*w.z + vm.m[3][3];
     if (clip < 0.001f) return false;
@@ -172,11 +219,9 @@ static bool WorldToScreen(const Vec3& w, Vec2& s, const Mat4& vm, float sw, floa
     return true;
 }
 
-// ---------------- DRAW HELPERS ----------------
 static inline ImU32 C(ImVec4 v) { return ImGui::ColorConvertFloat4ToU32(v); }
 
-static void DrawCorners(ImDrawList* dl, float x, float y, float w, float h,
-                        ImU32 c, float t) {
+static void DrawCorners(ImDrawList* dl, float x, float y, float w, float h, ImU32 c, float t) {
     float l = (w < h ? w : h) * 0.28f;
     if (l < 4.0f) l = 4.0f;
     dl->AddLine(ImVec2(x, y), ImVec2(x + l, y), c, t);
@@ -189,8 +234,7 @@ static void DrawCorners(ImDrawList* dl, float x, float y, float w, float h,
     dl->AddLine(ImVec2(x + w, y + h), ImVec2(x + w, y + h - l), c, t);
 }
 
-static void DrawHealthBar(ImDrawList* dl, float bx, float by, float w, float h,
-                          float frac, int side) {
+static void DrawHealthBar(ImDrawList* dl, float bx, float by, float w, float h, float frac, int side) {
     if (frac < 0.0f) frac = 0.0f;
     if (frac > 1.0f) frac = 1.0f;
     ImU32 hc = frac > 0.6f ? IM_COL32(60, 220, 60, 255)
@@ -203,8 +247,7 @@ static void DrawHealthBar(ImDrawList* dl, float bx, float by, float w, float h,
         float bxx = (side == 0) ? (bx - bw - gap) : (bx + w + gap);
         dl->AddRectFilled(ImVec2(bxx, by), ImVec2(bxx + bw, by + h), bg);
         float fill = h * frac;
-        dl->AddRectFilled(ImVec2(bxx, by + h - fill),
-                          ImVec2(bxx + bw, by + h), hc);
+        dl->AddRectFilled(ImVec2(bxx, by + h - fill), ImVec2(bxx + bw, by + h), hc);
     } else {
         float bh = 3.5f, gap = 4.0f;
         float byy = (side == 2) ? (by - bh - gap) : (by + h + gap);
@@ -214,9 +257,7 @@ static void DrawHealthBar(ImDrawList* dl, float bx, float by, float w, float h,
     }
 }
 
-// =====================================================================
-//  Rotating "F ESP" logo (top-left corner)
-// =====================================================================
+// ---------------- Rotating logo ----------------
 static inline ImVec2 RotatePoint(const ImVec2& v, float s, float c) {
     return ImVec2(v.x * c - v.y * s, v.x * s + v.y * c);
 }
@@ -268,79 +309,83 @@ static void DrawRotatingLogo() {
     ImVec2 textSize = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, text);
     ImVec2 textPos(posX - textSize.x * 0.5f, posY - textSize.y * 0.5f);
 
-    dl->AddText(font, fontSize, ImVec2(textPos.x + 1.0f, textPos.y + 1.0f),
-                IM_COL32(0, 0, 0, 200), text);
+    dl->AddText(font, fontSize, ImVec2(textPos.x + 1.0f, textPos.y + 1.0f), IM_COL32(0, 0, 0, 200), text);
     dl->AddText(font, fontSize, textPos, IM_COL32(100, 220, 255, 255), text);
 
     ImRotateEnd(dl, angle, ImVec2(posX, posY));
 }
 
 // =====================================================================
-//  RENDER MENU
+//  RENDER MENU (bilingual)
 // =====================================================================
 void RenderESPMenu() {
     if (!UI::IsWindowTargeted()) return;
 
-    ImGui::SetNextWindowSize(ImVec2(370, 760), ImGuiCond_FirstUseEver);
-    ImGui::Begin("farshad pm Esp", nullptr, ImGuiWindowFlags_NoCollapse);
+    ImGui::SetNextWindowSize(ImVec2(380, 780), ImGuiCond_FirstUseEver);
+    ImGui::Begin(L_Title(), nullptr, ImGuiWindowFlags_NoCollapse);
 
-    ImGui::TextColored(ImVec4(0.40f, 0.85f, 1.00f, 1.00f), "farshad pm Esp");
+    // Header
+    ImGui::TextColored(ImVec4(0.40f, 0.85f, 1.00f, 1.00f), "%s", L_Title());
     ImGui::SameLine();
     ImGui::TextDisabled("v1.0");
     ImGui::Separator();
 
-    ImGui::Checkbox("Enable ESP", &cfg.enabled);
+    // Language selector
+    ImGui::Text("%s", L_Language());
     ImGui::SameLine();
-    if (ImGui::Button("Re-attach")) AttachFromUI();
+    if (ImGui::RadioButton("English", g_lang == Lang::EN)) g_lang = Lang::EN;
+    ImGui::SameLine();
+    if (ImGui::RadioButton(u8"فارسی", g_lang == Lang::FA)) g_lang = Lang::FA;
+    ImGui::Separator();
+
+    ImGui::Checkbox(L_EnableESP(), &cfg.enabled);
+    ImGui::SameLine();
+    if (ImGui::Button(L_Reattach())) AttachFromUI();
     ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "%s", g_status);
     ImGui::Separator();
 
-    if (ImGui::CollapsingHeader("Filters", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Checkbox("Team Check", &cfg.teamCheck);
+    if (ImGui::CollapsingHeader(L_Filters(), ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Checkbox(L_TeamCheck(), &cfg.teamCheck);
         ImGui::SameLine();
         ImGui::TextDisabled("(LocalTeam=%d)", g_localTeam);
-        ImGui::SliderFloat("Max Distance", &cfg.maxDistance, 0.0f, 3000.0f, "%.0f");
+        ImGui::SliderFloat(L_MaxDist(), &cfg.maxDistance, 0.0f, 3000.0f, "%.0f");
     }
 
-    if (ImGui::CollapsingHeader("Visuals", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Checkbox("Box", &cfg.drawBox);
+    if (ImGui::CollapsingHeader(L_Visuals(), ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Checkbox(L_Box(), &cfg.drawBox);
         ImGui::SameLine();
-        ImGui::Checkbox("Corners", &cfg.drawCorners);
-        ImGui::Checkbox("Health Bar", &cfg.drawHealth);
+        ImGui::Checkbox(L_Corners(), &cfg.drawCorners);
+        ImGui::Checkbox(L_HealthBar(), &cfg.drawHealth);
         ImGui::SameLine();
-        ImGui::Checkbox("Distance", &cfg.drawDistance);
-        ImGui::Checkbox("Draw Local Player", &cfg.drawLocal);
+        ImGui::Checkbox(L_Distance(), &cfg.drawDistance);
+        ImGui::Checkbox(L_DrawLocal(), &cfg.drawLocal);
     }
 
-    if (ImGui::CollapsingHeader("Box Tuning", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::SliderFloat("Thickness",   &cfg.thickness,   0.5f, 5.0f, "%.1f");
-        ImGui::SliderFloat("Head Offset", &cfg.headOffset, 50.0f, 110.0f, "%.0f");
-        ImGui::SliderFloat("Width Ratio", &cfg.widthRatio,  0.2f, 0.8f, "%.2f");
+    if (ImGui::CollapsingHeader(L_BoxTuning(), ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::SliderFloat(L_Thickness(),  &cfg.thickness,  0.5f, 5.0f, "%.1f");
+        ImGui::SliderFloat(L_HeadOffset(), &cfg.headOffset, 50.0f, 110.0f, "%.0f");
+        ImGui::SliderFloat(L_WidthRatio(), &cfg.widthRatio, 0.2f, 0.8f, "%.2f");
     }
 
-    if (ImGui::CollapsingHeader("Health Bar")) {
-        ImGui::SliderFloat("Max HP", &cfg.healthMax, 50.0f, 500.0f, "%.0f");
-        ImGui::Combo("Side", &cfg.healthSide, "Left\0Right\0Top\0Bottom\0");
+    if (ImGui::CollapsingHeader(L_Health())) {
+        ImGui::SliderFloat(L_MaxHP(), &cfg.healthMax, 50.0f, 500.0f, "%.0f");
+        const char* sides_en = "Left\0Right\0Top\0Bottom\0";
+        // ImGui Combo needs a single buffer; keep EN for side names (short)
+        ImGui::Combo(L_Side(), &cfg.healthSide, sides_en);
     }
 
-    if (ImGui::CollapsingHeader("Matrix / Entity", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Combo("Matrix Source", &cfg.matrixChoice,
-                     "Main (0x257B2C8)\0Alt (0xFC7B00)\0");
-        ImGui::Checkbox("Entity List = Pointer Array", &cfg.pointerArray);
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip(
-                "Default ON. If boxes do NOT appear, untick this.\n"
-                "Controls whether 0x25B9390 is a pointer to the array\n"
-                "or the array itself.");
+    if (ImGui::CollapsingHeader(L_MatrixEntity(), ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Combo(L_MatrixSrc(), &cfg.matrixChoice, "Main (0x257B2C8)\0Alt (0xFC7B00)\0");
+        ImGui::Checkbox(L_PtrArray(), &cfg.pointerArray);
     }
 
-    if (ImGui::CollapsingHeader("Colors")) {
-        ImGui::ColorEdit4("Enemy", (float*)&cfg.enemyColor);
-        ImGui::ColorEdit4("Mate",  (float*)&cfg.mateColor);
-        ImGui::ColorEdit4("Local", (float*)&cfg.localColor);
+    if (ImGui::CollapsingHeader(L_Colors())) {
+        ImGui::ColorEdit4(L_Enemy(), (float*)&cfg.enemyColor);
+        ImGui::ColorEdit4(L_Mate(),  (float*)&cfg.mateColor);
+        ImGui::ColorEdit4(L_Local(), (float*)&cfg.localColor);
     }
 
-    if (ImGui::CollapsingHeader("Debug")) {
+    if (ImGui::CollapsingHeader(L_Debug())) {
         ImGui::Text("Base     : 0x%llX", (unsigned long long)g_gameBase);
         ImGui::Text("PID      : %lu",    (unsigned long)g_attachedPid);
         ImGui::Text("Entity   : %d",     g_dbgCount);
@@ -351,16 +396,16 @@ void RenderESPMenu() {
     }
 
     ImGui::Separator();
-    if (ImGui::CollapsingHeader("Contact", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Text("Telegram:");
+    if (ImGui::CollapsingHeader(L_Contact(), ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Text("%s", L_Telegram());
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(0.30f, 0.70f, 1.00f, 1.00f), "@client_v34");
 
-        if (ImGui::Button("Open Telegram", ImVec2(-1, 0))) {
+        if (ImGui::Button(L_OpenTG(), ImVec2(-1, 0))) {
             ShellExecuteA(nullptr, "open", "https://t.me/client_v34", nullptr, nullptr, SW_SHOWNORMAL);
         }
 
-        if (ImGui::Button("Copy @client_v34", ImVec2(-1, 0))) {
+        if (ImGui::Button(L_CopyTG(), ImVec2(-1, 0))) {
             if (OpenClipboard(nullptr)) {
                 EmptyClipboard();
                 const char* text = "@client_v34";
@@ -475,13 +520,11 @@ void RenderESPBoxes() {
         else                                               col = C(cfg.enemyColor);
 
         if (cfg.drawBox)
-            dl->AddRect(ImVec2(bx, by), ImVec2(bx + w, by + h),
-                        col, 0.0f, 0, cfg.thickness);
+            dl->AddRect(ImVec2(bx, by), ImVec2(bx + w, by + h), col, 0.0f, 0, cfg.thickness);
         if (cfg.drawCorners)
             DrawCorners(dl, bx, by, w, h, col, cfg.thickness + 0.5f);
         if (cfg.drawHealth)
-            DrawHealthBar(dl, bx, by, w, h, (float)hp / cfg.healthMax,
-                          cfg.healthSide);
+            DrawHealthBar(dl, bx, by, w, h, (float)hp / cfg.healthMax, cfg.healthSide);
         if (cfg.drawDistance) {
             char buf[48];
             sprintf_s(buf, "#%d  %.0f", i, dist);
