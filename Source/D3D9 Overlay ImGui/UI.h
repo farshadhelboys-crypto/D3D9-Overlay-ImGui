@@ -2,7 +2,6 @@
 #define UI_H
 
 #include <string>
-
 #include "pch.h"
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -48,7 +47,6 @@ public:
     static void GetAllWindow(std::vector<WindowItem>* vWindowList);
     static void SetTargetWindow(HWND hWindow);
 
-    // ▼▼▼ این دو خط اضافه شده ▼▼▼
     static HWND  GetTargetWindow() { return hTargetWindow; }
     static DWORD GetTargetPID()    { return dTargetPID; }
 };
