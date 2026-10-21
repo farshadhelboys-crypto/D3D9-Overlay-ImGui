@@ -1,6 +1,5 @@
 // =====================================================================
-//  ESP - Integrated with UI framework
-//  External ESP using ReadProcessMemory (no injection)
+//  ESP - Integrated with UI / Drawing framework
 // =====================================================================
 #pragma once
 #include <Windows.h>
@@ -12,7 +11,7 @@
 #include <imgui.h>
 #include "UI.h"
 
-// ---------------- OFFSETS (from dump) ----------------
+// ---------------- OFFSETS ----------------
 namespace Off {
     constexpr uintptr_t ENTITY_ARRAY_PTR = 0x25B9390;
     constexpr uintptr_t ENTITY_COUNT     = 0x25B939C;
@@ -98,12 +97,10 @@ static void Detach() {
 
 static bool AttachFromUI() {
     Detach();
-
     if (!UI::IsWindowTargeted()) {
-        strcpy_s(g_status, "No target window (select game first)");
+        strcpy_s(g_status, "No target window");
         return false;
     }
-
     HWND  hwnd = UI::GetTargetWindow();
     DWORD pid  = UI::GetTargetPID();
     if (!pid && hwnd) GetWindowThreadProcessId(hwnd, &pid);
@@ -114,14 +111,12 @@ static bool AttachFromUI() {
         strcpy_s(g_status, "OpenProcess failed (run as admin)");
         return false;
     }
-
     g_gameBase = GetModuleBase(pid, L"clientmod_game.dll");
     if (!g_gameBase) {
         strcpy_s(g_status, "clientmod_game.dll not loaded yet");
         CloseHandle(g_hProc); g_hProc = nullptr;
         return false;
     }
-
     g_attachedPid = pid;
     sprintf_s(g_status, "Attached: PID=%lu base=0x%llX",
               (unsigned long)pid, (unsigned long long)g_gameBase);
@@ -202,19 +197,20 @@ static void DrawHealthBar(ImDrawList* dl, float bx, float by, float w, float h,
     }
 }
 
-// ---------------- MENU ----------------
-static void RenderMenu() {
+// =====================================================================
+//  RENDER MENU (only when INSERT pressed)
+// =====================================================================
+void RenderESPMenu() {
+    if (!UI::IsWindowTargeted()) return;
+
     ImGui::SetNextWindowSize(ImVec2(370, 720), ImGuiCond_FirstUseEver);
     ImGui::Begin("ESP Settings", nullptr, ImGuiWindowFlags_NoCollapse);
 
-    ImGui::Text("Target: %s",
-        UI::IsWindowTargeted() ? "selected" : "NONE (pick from list)");
+    ImGui::Checkbox("Enable ESP", &cfg.enabled);
     ImGui::SameLine();
     if (ImGui::Button("Re-attach")) AttachFromUI();
     ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "%s", g_status);
     ImGui::Separator();
-
-    ImGui::Checkbox("Enable ESP", &cfg.enabled);
 
     if (ImGui::CollapsingHeader("Filters", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Checkbox("Team Check", &cfg.teamCheck);
@@ -274,20 +270,19 @@ static void RenderMenu() {
     ImGui::End();
 }
 
-// ---------------- MAIN RENDER (called every frame) ----------------
-void RenderESP() {
-    RenderMenu();
-
+// =====================================================================
+//  RENDER BOXES (always, when target set & ESP enabled)
+// =====================================================================
+void RenderESPBoxes() {
+    // Detect target window change
     if (UI::GetTargetWindow() != g_lastTarget) {
         g_lastTarget = UI::GetTargetWindow();
         if (g_lastTarget) AttachFromUI();
         else              Detach();
     }
-
     if ((!g_hProc || !g_gameBase) && UI::IsWindowTargeted()) {
         AttachFromUI();
     }
-
     if (!g_hProc || !g_gameBase) return;
 
     UpdateLocal();
@@ -372,14 +367,11 @@ void RenderESP() {
         if (cfg.drawBox)
             dl->AddRect(ImVec2(bx, by), ImVec2(bx + w, by + h),
                         col, 0.0f, 0, cfg.thickness);
-
         if (cfg.drawCorners)
             DrawCorners(dl, bx, by, w, h, col, cfg.thickness + 0.5f);
-
         if (cfg.drawHealth)
             DrawHealthBar(dl, bx, by, w, h, (float)hp / cfg.healthMax,
                           cfg.healthSide);
-
         if (cfg.drawDistance) {
             char buf[48];
             sprintf_s(buf, "#%d  %.0f", i, dist);
@@ -387,7 +379,12 @@ void RenderESP() {
             dl->AddText(ImVec2(bx + w * 0.5f - ts.x * 0.5f, by + h + 2.0f),
                         IM_COL32(255, 255, 255, 230), buf);
         }
-
         ++g_dbgDrawn;
     }
+}
+
+// Wrapper (optional, in case you want to call both)
+void RenderESP() {
+    RenderESPMenu();
+    RenderESPBoxes();
 }
