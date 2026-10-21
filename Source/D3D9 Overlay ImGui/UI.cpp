@@ -1,7 +1,6 @@
 #include "UI.h"
 #include "Drawing.h"
-
-extern void RenderESP();   // <-- ADDED
+#include "esp.h"
 
 LPDIRECT3DDEVICE9 UI::pD3DDevice = nullptr;
 LPDIRECT3D9 UI::pD3D = nullptr;
@@ -91,7 +90,7 @@ void UI::Render()
     wc.style = CS_VREDRAW | CS_HREDRAW;
 
     ::RegisterClassEx(&wc);
-    const HWND hwnd = ::CreateWindowExW(WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE, wc.lpszClassName, _T("D3D9 Overlay ImGui"), WS_POPUP, 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN), nullptr, nullptr, wc.hInstance, nullptr);
+    const HWND hwnd = ::CreateWindowExW(WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_LAYERED, wc.lpszClassName, _T("D3D9 Overlay ImGui"), WS_POPUP, 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN), nullptr, nullptr, wc.hInstance, nullptr);
 
     SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
     const MARGINS margin = { -1, 0, 0, 0 };
@@ -196,22 +195,20 @@ void UI::Render()
             continue;
         }
 
+        // ----- Correct ImGui frame sequence -----
         ImGui_ImplDX9_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
-        {
-            Drawing::Draw();
-            RenderESP();          // <-- ADDED HERE
-        }
+
+        Drawing::Draw();   // menu + ESP (single call, no double-draw)
+
         ImGui::EndFrame();
 
+        // Toggle click-through based on menu visibility
         if (Drawing::isActive())
             SetWindowLong(hwnd, GWL_EXSTYLE, WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TOOLWINDOW);
         else
             SetWindowLong(hwnd, GWL_EXSTYLE, WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_TOOLWINDOW);
-
-        ImGui::Render();
-        ImGui::EndFrame();
 
         pD3DDevice->SetRenderState(D3DRS_ZENABLE, FALSE);
         pD3DDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);

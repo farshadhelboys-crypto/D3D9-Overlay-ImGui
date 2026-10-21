@@ -1,7 +1,6 @@
 // =====================================================================
 //  ESP - Integrated with UI / Drawing framework
 // =====================================================================
-#pragma once
 #include <Windows.h>
 #include <TlHelp32.h>
 #include <cstdio>
@@ -10,6 +9,7 @@
 #include <cstdint>
 #include <imgui.h>
 #include "UI.h"
+#include "esp.h"
 
 // ---------------- OFFSETS ----------------
 namespace Off {
@@ -73,11 +73,22 @@ static inline bool RPM(uintptr_t addr, T& out) {
 
 static uintptr_t GetModuleBase(DWORD pid, const wchar_t* mod) {
     HANDLE s = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
+    if (s == INVALID_HANDLE_VALUE)
+        return 0;
+
     MODULEENTRY32W me{ sizeof(me) };
     uintptr_t base = 0;
-    while (Module32NextW(s, &me)) {
-        if (_wcsicmp(me.szModule, mod) == 0) { base = (uintptr_t)me.modBaseAddr; break; }
+
+    // IMPORTANT: must call Module32FirstW before Module32NextW
+    if (Module32FirstW(s, &me)) {
+        do {
+            if (_wcsicmp(me.szModule, mod) == 0) {
+                base = (uintptr_t)me.modBaseAddr;
+                break;
+            }
+        } while (Module32NextW(s, &me));
     }
+
     CloseHandle(s);
     return base;
 }
@@ -383,7 +394,7 @@ void RenderESPBoxes() {
     }
 }
 
-// Wrapper (optional, in case you want to call both)
+// Wrapper (optional)
 void RenderESP() {
     RenderESPMenu();
     RenderESPBoxes();

@@ -1,7 +1,5 @@
 #include "Drawing.h"
-
-extern void RenderESPMenu();
-extern void RenderESPBoxes();
+#include "esp.h"
 
 LPCSTR Drawing::lpWindowName = "D3D9 Overlay ImGui";
 ImVec2 Drawing::vWindowSize = { 350, 75 };
