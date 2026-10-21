@@ -7,6 +7,7 @@
 #include <cstring>
 #include <cmath>
 #include <cstdint>
+#include <cfloat>
 #include <imgui.h>
 #include "UI.h"
 #include "esp.h"
@@ -214,7 +215,11 @@ static void DrawHealthBar(ImDrawList* dl, float bx, float by, float w, float h,
 // =====================================================================
 //  Rotating "F ESP" logo (top-left corner)
 // =====================================================================
-static int   g_RotateStartIdx = -1;
+static inline ImVec2 RotatePoint(const ImVec2& v, float s, float c) {
+    return ImVec2(v.x * c - v.y * s, v.x * s + v.y * c);
+}
+
+static int g_RotateStartIdx = -1;
 
 static void ImRotateStart(ImDrawList* dl) {
     g_RotateStartIdx = dl->VtxBuffer.Size;
@@ -222,20 +227,23 @@ static void ImRotateStart(ImDrawList* dl) {
 
 static ImVec2 ImRotationCenter(ImDrawList* dl) {
     ImVec2 l(FLT_MAX, FLT_MAX), u(-FLT_MAX, -FLT_MAX);
-    const ImDrawVert* vert = &dl->VtxBuffer.Data[g_RotateStartIdx];
-    for (int i = g_RotateStartIdx; i < dl->VtxBuffer.Size; i++, vert++) {
-        l = ImMin(l, vert->pos);
-        u = ImMax(u, vert->pos);
+    for (int i = g_RotateStartIdx; i < dl->VtxBuffer.Size; i++) {
+        const ImVec2& p = dl->VtxBuffer.Data[i].pos;
+        if (p.x < l.x) l.x = p.x;
+        if (p.y < l.y) l.y = p.y;
+        if (p.x > u.x) u.x = p.x;
+        if (p.y > u.y) u.y = p.y;
     }
     return ImVec2((l.x + u.x) * 0.5f, (l.y + u.y) * 0.5f);
 }
 
 static void ImRotateEnd(ImDrawList* dl, float rad, ImVec2 center) {
-    float s = sinf(rad), c = cosf(rad);
-    center = ImRotate(center, s, c) - center;
+    float s = sinf(rad);
+    float c = cosf(rad);
     for (int i = g_RotateStartIdx; i < dl->VtxBuffer.Size; i++) {
         ImDrawVert& v = dl->VtxBuffer.Data[i];
-        v.pos = ImRotate(v.pos, s, c) - center;
+        ImVec2 p = v.pos - center;
+        v.pos = RotatePoint(p, s, c) + center;
     }
 }
 
@@ -249,7 +257,7 @@ static void DrawRotatingLogo() {
     const float radius = 22.0f;
 
     // Continuous 360 rotation (~1 full turn every ~3 seconds)
-    const float angle = (float)ImGui::GetTime() * 2.1f;  // radians
+    const float angle = (float)ImGui::GetTime() * 2.1f;
 
     // Soft glow circle behind text
     dl->AddCircleFilled(ImVec2(posX, posY), radius + 4.0f, IM_COL32(0, 0, 0, 120), 32);
@@ -260,24 +268,24 @@ static void DrawRotatingLogo() {
     for (int i = 0; i < segments; ++i) {
         float a0 = angle + (float)i / segments * 2.0f * (float)M_PI;
         float a1 = angle + (float)(i + 1) / segments * 2.0f * (float)M_PI;
-        float alpha = 80 + (int)(120 * (0.5f + 0.5f * sinf(a0 * 2.0f)));
+        float alpha = 80.0f + 120.0f * (0.5f + 0.5f * sinf(a0 * 2.0f));
         dl->AddLine(
             ImVec2(posX + cosf(a0) * radius, posY + sinf(a0) * radius),
             ImVec2(posX + cosf(a1) * radius, posY + sinf(a1) * radius),
-            IM_COL32(80, 200, 255, alpha), 2.0f);
+            IM_COL32(80, 200, 255, (int)alpha), 2.0f);
     }
 
     // Rotating text "F ESP"
     const char* text = "F ESP";
     ImFont* font = ImGui::GetFont();
-    float fontSize = 14.0f;   // small readable size
+    const float fontSize = 14.0f;   // small readable size
 
     ImRotateStart(dl);
     ImVec2 textSize = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, text);
     ImVec2 textPos(posX - textSize.x * 0.5f, posY - textSize.y * 0.5f);
 
     // Shadow for readability
-    dl->AddText(font, fontSize, ImVec2(textPos.x + 1, textPos.y + 1),
+    dl->AddText(font, fontSize, ImVec2(textPos.x + 1.0f, textPos.y + 1.0f),
                 IM_COL32(0, 0, 0, 200), text);
     // Main text (cyan)
     dl->AddText(font, fontSize, textPos, IM_COL32(100, 220, 255, 255), text);
