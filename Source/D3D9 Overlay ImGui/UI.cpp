@@ -74,12 +74,9 @@ void UI::Render()
         GetWindow();
     #endif
 
-    WNDCLASSEX wc;
-
-    wc.cbClsExtra = NULL;
+    WNDCLASSEX wc{};
     wc.cbSize = sizeof(WNDCLASSEX);
-    wc.cbWndExtra = NULL;
-    wc.hbrBackground = (HBRUSH)CreateSolidBrush(RGB(0, 0, 0));
+    wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH); // no leak (stock object)
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
     wc.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
     wc.hIconSm = LoadIcon(nullptr, IDI_APPLICATION);
@@ -90,7 +87,15 @@ void UI::Render()
     wc.style = CS_VREDRAW | CS_HREDRAW;
 
     ::RegisterClassEx(&wc);
-    const HWND hwnd = ::CreateWindowExW(WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_LAYERED, wc.lpszClassName, _T("D3D9 Overlay ImGui"), WS_POPUP, 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN), nullptr, nullptr, wc.hInstance, nullptr);
+    const HWND hwnd = ::CreateWindowExW(
+        WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_LAYERED,
+        wc.lpszClassName,
+        _T("D3D9 Overlay ImGui"),
+        WS_POPUP,
+        0, 0,
+        GetSystemMetrics(SM_CXSCREEN),
+        GetSystemMetrics(SM_CYSCREEN),
+        nullptr, nullptr, wc.hInstance, nullptr);
 
     SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
     const MARGINS margin = { -1, 0, 0, 0 };
@@ -166,7 +171,7 @@ void UI::Render()
             ResetDevice();
         }
 
-        #ifdef _WINDLL 
+        #ifdef _WINDLL
         if (hTargetWindow != nullptr)
             MoveWindow(hwnd);
         else
@@ -181,7 +186,11 @@ void UI::Render()
             pD3DDevice->SetRenderState(D3DRS_ZENABLE, FALSE);
             pD3DDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
             pD3DDevice->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE);
-            const D3DCOLOR clear_col_dx = D3DCOLOR_RGBA((int)(clear_color.x * clear_color.w * 255.0f), (int)(clear_color.y * clear_color.w * 255.0f), (int)(clear_color.z * clear_color.w * 255.0f), (int)(clear_color.w * 255.0f));
+            const D3DCOLOR clear_col_dx = D3DCOLOR_RGBA(
+                (int)(clear_color.x * clear_color.w * 255.0f),
+                (int)(clear_color.y * clear_color.w * 255.0f),
+                (int)(clear_color.z * clear_color.w * 255.0f),
+                (int)(clear_color.w * 255.0f));
             pD3DDevice->Clear(0, nullptr, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, clear_col_dx, 1.0f, 0);
 
             if (pD3DDevice->BeginScene() >= 0)
@@ -195,12 +204,12 @@ void UI::Render()
             continue;
         }
 
-        // ----- Correct ImGui frame sequence -----
+        // Correct ImGui frame sequence
         ImGui_ImplDX9_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
 
-        Drawing::Draw();   // menu + ESP (single call, no double-draw)
+        Drawing::Draw();
 
         ImGui::EndFrame();
 
@@ -213,7 +222,11 @@ void UI::Render()
         pD3DDevice->SetRenderState(D3DRS_ZENABLE, FALSE);
         pD3DDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
         pD3DDevice->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE);
-        const D3DCOLOR clear_col_dx = D3DCOLOR_RGBA((int)(clear_color.x * clear_color.w * 255.0f), (int)(clear_color.y * clear_color.w * 255.0f), (int)(clear_color.z * clear_color.w * 255.0f), (int)(clear_color.w * 255.0f));
+        const D3DCOLOR clear_col_dx = D3DCOLOR_RGBA(
+            (int)(clear_color.x * clear_color.w * 255.0f),
+            (int)(clear_color.y * clear_color.w * 255.0f),
+            (int)(clear_color.z * clear_color.w * 255.0f),
+            (int)(clear_color.w * 255.0f));
         pD3DDevice->Clear(0, nullptr, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, clear_col_dx, 1.0f, 0);
 
         if (IsWindowTargeted())
@@ -341,7 +354,7 @@ BOOL CALLBACK UI::EnumAllWind(const HWND hWindow, const LPARAM lPrams)
     if (!IsWindowValid(hWindow))
         return TRUE;
 
-    WindowItem CurrentWindowItem = {hWindow, 0, 0};
+    WindowItem CurrentWindowItem = { hWindow, 0, 0 };
     DWORD procID;
 
     GetWindowTextA(hWindow, CurrentWindowItem.CurrentWindowTitle, sizeof(CurrentWindowItem.CurrentWindowTitle));
@@ -353,7 +366,6 @@ BOOL CALLBACK UI::EnumAllWind(const HWND hWindow, const LPARAM lPrams)
     GetProcessName(CurrentWindowItem.CurrentProcessName, procID);
 
     const auto vWindowList = (std::vector<WindowItem>*)lPrams;
-
     vWindowList->push_back(CurrentWindowItem);
 
     return TRUE;
@@ -361,7 +373,7 @@ BOOL CALLBACK UI::EnumAllWind(const HWND hWindow, const LPARAM lPrams)
 
 void UI::GetProcessName(const LPSTR lpProcessName, const DWORD dPID)
 {
-    char lpCurrentProcessName[125];
+    char lpCurrentProcessName[125] = {};
 
     PROCESSENTRY32 ProcList{};
     ProcList.dwSize = sizeof(ProcList);
@@ -371,24 +383,22 @@ void UI::GetProcessName(const LPSTR lpProcessName, const DWORD dPID)
         return;
 
     if (!Process32First(hProcList, &ProcList))
-        return;
-
-    if (ProcList.th32ProcessID == dPID)
     {
-        wcstombs_s(nullptr, lpCurrentProcessName, ProcList.szExeFile, sizeof(lpCurrentProcessName));
-        strncpy_s(lpProcessName, sizeof(lpCurrentProcessName), lpCurrentProcessName, sizeof(lpCurrentProcessName));
+        CloseHandle(hProcList);
         return;
     }
 
-    while (Process32Next(hProcList, &ProcList))
+    do
     {
         if (ProcList.th32ProcessID == dPID)
         {
             wcstombs_s(nullptr, lpCurrentProcessName, ProcList.szExeFile, sizeof(lpCurrentProcessName));
-            strncpy_s(lpProcessName, sizeof(lpCurrentProcessName), lpCurrentProcessName, sizeof(lpCurrentProcessName));
-            return;
+            strncpy_s(lpProcessName, 125, lpCurrentProcessName, _TRUNCATE);
+            break;
         }
-    }
+    } while (Process32Next(hProcList, &ProcList));
+
+    CloseHandle(hProcList); // was leaking every call
 }
 
 BOOL UI::IsWindowValid(const HWND hCurrentWindow)
@@ -416,9 +426,8 @@ BOOL UI::IsWindowValid(const HWND hCurrentWindow)
 
 BOOL UI::IsWindowCloaked(const HWND hCurrentWindow)
 {
-    DWORD cloaked;
-    const HRESULT hr = DwmGetWindowAttribute(hCurrentWindow, DWMWA_CLOAKED, &cloaked,
-        sizeof(cloaked));
+    DWORD cloaked = 0;
+    const HRESULT hr = DwmGetWindowAttribute(hCurrentWindow, DWMWA_CLOAKED, &cloaked, sizeof(cloaked));
     return SUCCEEDED(hr) && cloaked;
 }
 

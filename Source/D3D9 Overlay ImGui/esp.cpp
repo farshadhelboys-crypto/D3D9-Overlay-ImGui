@@ -12,6 +12,8 @@
 #include "UI.h"
 #include "esp.h"
 
+#pragma comment(lib, "shell32.lib")  // ShellExecuteA for Telegram button
+
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -225,18 +227,6 @@ static void ImRotateStart(ImDrawList* dl) {
     g_RotateStartIdx = dl->VtxBuffer.Size;
 }
 
-static ImVec2 ImRotationCenter(ImDrawList* dl) {
-    ImVec2 l(FLT_MAX, FLT_MAX), u(-FLT_MAX, -FLT_MAX);
-    for (int i = g_RotateStartIdx; i < dl->VtxBuffer.Size; i++) {
-        const ImVec2& p = dl->VtxBuffer.Data[i].pos;
-        if (p.x < l.x) l.x = p.x;
-        if (p.y < l.y) l.y = p.y;
-        if (p.x > u.x) u.x = p.x;
-        if (p.y > u.y) u.y = p.y;
-    }
-    return ImVec2((l.x + u.x) * 0.5f, (l.y + u.y) * 0.5f);
-}
-
 static void ImRotateEnd(ImDrawList* dl, float rad, ImVec2 center) {
     float s = sinf(rad);
     float c = cosf(rad);
@@ -251,19 +241,14 @@ static void DrawRotatingLogo() {
     ImDrawList* dl = ImGui::GetBackgroundDrawList();
     if (!dl) return;
 
-    // Position: top-left corner of the game overlay
     const float posX = 28.0f;
     const float posY = 28.0f;
     const float radius = 22.0f;
-
-    // Continuous 360 rotation (~1 full turn every ~3 seconds)
     const float angle = (float)ImGui::GetTime() * 2.1f;
 
-    // Soft glow circle behind text
     dl->AddCircleFilled(ImVec2(posX, posY), radius + 4.0f, IM_COL32(0, 0, 0, 120), 32);
     dl->AddCircle(ImVec2(posX, posY), radius + 2.0f, IM_COL32(60, 180, 255, 180), 32, 1.5f);
 
-    // Rotating ring
     const int segments = 48;
     for (int i = 0; i < segments; ++i) {
         float a0 = angle + (float)i / segments * 2.0f * (float)M_PI;
@@ -275,26 +260,23 @@ static void DrawRotatingLogo() {
             IM_COL32(80, 200, 255, (int)alpha), 2.0f);
     }
 
-    // Rotating text "F ESP"
     const char* text = "F ESP";
     ImFont* font = ImGui::GetFont();
-    const float fontSize = 14.0f;   // small readable size
+    const float fontSize = 14.0f;
 
     ImRotateStart(dl);
     ImVec2 textSize = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, text);
     ImVec2 textPos(posX - textSize.x * 0.5f, posY - textSize.y * 0.5f);
 
-    // Shadow for readability
     dl->AddText(font, fontSize, ImVec2(textPos.x + 1.0f, textPos.y + 1.0f),
                 IM_COL32(0, 0, 0, 200), text);
-    // Main text (cyan)
     dl->AddText(font, fontSize, textPos, IM_COL32(100, 220, 255, 255), text);
 
     ImRotateEnd(dl, angle, ImVec2(posX, posY));
 }
 
 // =====================================================================
-//  RENDER MENU (only when INSERT pressed)
+//  RENDER MENU
 // =====================================================================
 void RenderESPMenu() {
     if (!UI::IsWindowTargeted()) return;
@@ -302,7 +284,6 @@ void RenderESPMenu() {
     ImGui::SetNextWindowSize(ImVec2(370, 760), ImGuiCond_FirstUseEver);
     ImGui::Begin("farshad pm Esp", nullptr, ImGuiWindowFlags_NoCollapse);
 
-    // Header / branding
     ImGui::TextColored(ImVec4(0.40f, 0.85f, 1.00f, 1.00f), "farshad pm Esp");
     ImGui::SameLine();
     ImGui::TextDisabled("v1.0");
@@ -369,7 +350,6 @@ void RenderESPMenu() {
         ImGui::Text("LocalTeam: %d",     g_localTeam);
     }
 
-    // ---------- Contact / Telegram ----------
     ImGui::Separator();
     if (ImGui::CollapsingHeader("Contact", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Text("Telegram:");
@@ -399,14 +379,12 @@ void RenderESPMenu() {
 }
 
 // =====================================================================
-//  RENDER BOXES (always, when target set & ESP enabled)
+//  RENDER BOXES
 // =====================================================================
 void RenderESPBoxes() {
-    // Always draw the spinning logo when a target window is set
     if (UI::IsWindowTargeted())
         DrawRotatingLogo();
 
-    // Detect target window change
     if (UI::GetTargetWindow() != g_lastTarget) {
         g_lastTarget = UI::GetTargetWindow();
         if (g_lastTarget) AttachFromUI();
@@ -515,7 +493,6 @@ void RenderESPBoxes() {
     }
 }
 
-// Wrapper (optional)
 void RenderESP() {
     RenderESPMenu();
     RenderESPBoxes();
