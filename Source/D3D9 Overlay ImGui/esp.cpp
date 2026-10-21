@@ -1,11 +1,13 @@
 // =====================================================================
 //  ESP - Ready to build for D3D9-Overlay-ImGui
-//  Drop into the project, replace demo content, build & run.
+//  External ESP using ReadProcessMemory (no injection)
 // =====================================================================
 #pragma once
 #include <Windows.h>
 #include <TlHelp32.h>
 #include <cstdio>
+#include <cstring>
+#include <cmath>
 #include <cstdint>
 #include <imgui.h>
 
@@ -27,7 +29,7 @@ struct Vec3 { float x, y, z; };
 struct Vec2 { float x, y; };
 struct Mat4 { float m[4][4]; };
 
-// ---------------- CONFIG (قابل تغییر از منو) ----------------
+// ---------------- CONFIG ----------------
 struct EspConfig {
     bool  enabled       = true;
     bool  teamCheck     = false;
@@ -35,20 +37,25 @@ struct EspConfig {
     bool  drawCorners   = false;
     bool  drawHealth    = true;
     bool  drawDistance  = true;
-    bool  pointerArray  = true;     // اگه باکس‌ها نیومدن، این تیک رو بردار
-    int   matrixChoice  = 0;        // 0=Main, 1=Alt
+    bool  drawLocal     = false;
+    bool  pointerArray  = true;    // if boxes don't show, untick this
+    int   matrixChoice  = 0;       // 0=Main, 1=Alt
     float headOffset    = 72.0f;
     float widthRatio    = 0.45f;
     float thickness     = 1.6f;
     float maxDistance   = 800.0f;
     ImVec4 enemyColor   = ImVec4(1.00f, 0.25f, 0.25f, 1.00f);
     ImVec4 mateColor    = ImVec4(0.25f, 0.85f, 1.00f, 1.00f);
+    ImVec4 localColor   = ImVec4(1.00f, 1.00f, 0.30f, 1.00f);
 } cfg;
 
 // ---------------- STATE ----------------
-static HANDLE     g_hProc    = nullptr;
-static uintptr_t  g_gameBase = 0;
-static int        g_localTeam = 0;
+static HANDLE     g_hProc      = nullptr;
+static uintptr_t  g_gameBase   = 0;
+static int        g_localTeam  = 0;
+static uintptr_t  g_localPtr   = 0;
+static Vec3       g_localPos   = {0, 0, 0};
+static bool       g_haveLocal  = false;
 static char       g_status[128] = "Not attached";
 
 // ---------------- MEMORY ----------------
@@ -82,6 +89,9 @@ static uintptr_t GetModuleBase(DWORD pid, const wchar_t* mod) {
 static void Detach() {
     if (g_hProc) { CloseHandle(g_hProc); g_hProc = nullptr; }
     g_gameBase = 0;
+    g_localTeam = 0;
+    g_localPtr = 0;
+    g_haveLocal = false;
     strcpy_s(g_status, "Not attached");
 }
 
@@ -97,15 +107,24 @@ static bool Attach() {
     return true;
 }
 
-// ---------------- LOCAL PLAYER / TEAM ----------------
-static void UpdateLocalTeam() {
+// ---------------- LOCAL PLAYER ----------------
+static void UpdateLocal() {
+    g_localTeam = 0;
+    g_localPtr  = 0;
+    g_haveLocal = false;
     if (!g_hProc || !g_gameBase) return;
+
     uint32_t enc = 0;
     if (!RPM(g_gameBase + Off::LOCAL_PLAYER_ENC, enc)) return;
     uintptr_t lp = (uintptr_t)(enc ^ Off::LOCAL_PLAYER_XOR);
-    if (lp < 0x10000) { g_localTeam = 0; return; }
+    if (lp < 0x10000) return;
+    g_localPtr = lp;
+
     int team = 0;
     if (RPM(lp + Off::OBJ_TEAM, team)) g_localTeam = team;
+
+    Vec3 o{};
+    if (RPM(lp + Off::OBJ_ORIGIN, o)) { g_localPos = o; g_haveLocal = true; }
 }
 
 // ---------------- W2S ----------------
@@ -123,39 +142,40 @@ static bool WorldToScreen(const Vec3& w, Vec2& s, const Mat4& vm, float sw, floa
 // ---------------- DRAW HELPERS ----------------
 static inline ImU32 C(ImVec4 v) { return ImGui::ColorConvertFloat4ToU32(v); }
 
-static void DrawBoxCorner(ImDrawList* dl, float x, float y, float w, float h,
-                          ImU32 c, float t) {
-    float l = w * 0.25f;
-    // top-left
+static void DrawCorners(ImDrawList* dl, float x, float y, float w, float h,
+                        ImU32 c, float t) {
+    float l = (w < h ? w : h) * 0.28f;
+    if (l < 4.0f) l = 4.0f;
+
     dl->AddLine(ImVec2(x, y), ImVec2(x + l, y), c, t);
     dl->AddLine(ImVec2(x, y), ImVec2(x, y + l), c, t);
-    // top-right
+
     dl->AddLine(ImVec2(x + w, y), ImVec2(x + w - l, y), c, t);
     dl->AddLine(ImVec2(x + w, y), ImVec2(x + w, y + l), c, t);
-    // bottom-left
+
     dl->AddLine(ImVec2(x, y + h), ImVec2(x + l, y + h), c, t);
     dl->AddLine(ImVec2(x, y + h), ImVec2(x, y + h - l), c, t);
-    // bottom-right
+
     dl->AddLine(ImVec2(x + w, y + h), ImVec2(x + w - l, y + h), c, t);
     dl->AddLine(ImVec2(x + w, y + h), ImVec2(x + w, y + h - l), c, t);
 }
 
 // ---------------- MENU ----------------
 static void RenderMenu() {
-    ImGui::SetNextWindowSize(ImVec2(340, 560), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(340, 600), ImGuiCond_FirstUseEver);
     ImGui::Begin("ESP Settings", nullptr, ImGuiWindowFlags_NoCollapse);
 
     ImGui::Checkbox("Enable ESP", &cfg.enabled);
     ImGui::SameLine();
     if (ImGui::Button("Re-attach")) Attach();
-    ImGui::TextColored(ImVec4(0.5f,1,0.5f,1), "%s", g_status);
+    ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "%s", g_status);
     ImGui::Separator();
 
     if (ImGui::CollapsingHeader("Filters", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Checkbox("Team Check", &cfg.teamCheck);
         ImGui::SameLine();
         ImGui::TextDisabled("(LocalTeam=%d)", g_localTeam);
-        ImGui::SliderFloat("Max Distance", &cfg.maxDistance, 0, 2000, "%.0f m");
+        ImGui::SliderFloat("Max Distance", &cfg.maxDistance, 0.0f, 2000.0f, "%.0f m");
     }
 
     if (ImGui::CollapsingHeader("Visuals", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -165,43 +185,46 @@ static void RenderMenu() {
         ImGui::Checkbox("Health Bar", &cfg.drawHealth);
         ImGui::SameLine();
         ImGui::Checkbox("Distance", &cfg.drawDistance);
+        ImGui::Checkbox("Draw Local Player", &cfg.drawLocal);
     }
 
     if (ImGui::CollapsingHeader("Tuning")) {
         ImGui::SliderFloat("Thickness", &cfg.thickness, 0.5f, 5.0f, "%.1f");
-        ImGui::SliderFloat("Head Offset", &cfg.headOffset, 50.0f, 100.0f, "%.0f");
+        ImGui::SliderFloat("Head Offset", &cfg.headOffset, 50.0f, 110.0f, "%.0f");
         ImGui::SliderFloat("Width Ratio", &cfg.widthRatio, 0.2f, 0.8f, "%.2f");
-        ImGui::Combo("Matrix Source", &cfg.matrixChoice, "Main (0x257B2C8)\0Alt (0xFC7B00)\0");
+        ImGui::Combo("Matrix Source", &cfg.matrixChoice,
+                     "Main (0x257B2C8)\0Alt (0xFC7B00)\0");
         ImGui::Checkbox("Entity List = Pointer Array", &cfg.pointerArray);
         ImGui::SameLine();
         ImGui::TextDisabled("(?)");
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Default: ON. If boxes do NOT show up, untick this.\n"
-                              "This tells whether 0x25B9390 holds a pointer to the array\n"
-                              "or the array itself.");
+            ImGui::SetTooltip(
+                "Default ON. If boxes do NOT appear, untick this.\n"
+                "It controls whether 0x25B9390 holds a pointer to\n"
+                "the entity array or is the entity array itself.");
     }
 
     if (ImGui::CollapsingHeader("Colors")) {
         ImGui::ColorEdit4("Enemy", (float*)&cfg.enemyColor);
         ImGui::ColorEdit4("Mate",  (float*)&cfg.mateColor);
+        ImGui::ColorEdit4("Local", (float*)&cfg.localColor);
     }
 
     ImGui::End();
 }
 
-// ---------------- MAIN RENDER (call every frame) ----------------
-// NOTE: Call this AFTER ImGui::NewFrame() and BEFORE ImGui::Render()
-static void RenderESP() {
+// ---------------- MAIN RENDER (called every frame) ----------------
+void RenderESP() {
     RenderMenu();
 
-    if (!cfg.enabled) return;
-
-    // Auto-attach on first frame
+    // Auto attach on first frame
     if (!g_hProc || !g_gameBase) {
         if (!Attach()) return;
     }
 
-    UpdateLocalTeam();
+    UpdateLocal();
+
+    if (!cfg.enabled) return;
 
     // Read view matrix
     Mat4 vm{};
@@ -209,7 +232,7 @@ static void RenderESP() {
         (cfg.matrixChoice == 0 ? Off::VIEW_MATRIX : Off::VIEW_MATRIX_ALT);
     if (!RPM(vmAddr, vm)) return;
 
-    // Read count
+    // Read entity count
     int count = 0;
     if (!RPM(g_gameBase + Off::ENTITY_COUNT, count)) return;
     if (count <= 0 || count > 512) return;
@@ -223,7 +246,7 @@ static void RenderESP() {
         listBase = g_gameBase + Off::ENTITY_ARRAY_PTR;
     }
 
-    ImGuiIO& io = ImGui::GetIO();
+    ImGuiIO& io   = ImGui::GetIO();
     const float sw = io.DisplaySize.x;
     const float sh = io.DisplaySize.y;
     ImDrawList* dl = ImGui::GetBackgroundDrawList();
@@ -231,25 +254,28 @@ static void RenderESP() {
     for (int i = 0; i < count; ++i) {
         uintptr_t ent = listBase + (uintptr_t)i * Off::ENTITY_STRIDE;
 
-        int hp = 0, team = 0;
+        int  hp = 0;
+        int  team = 0;
         Vec3 origin{};
-        if (!RPM(ent + Off::OBJ_HP, hp))       continue;
-        if (!RPM(ent + Off::OBJ_TEAM, team))   continue;
+        if (!RPM(ent + Off::OBJ_HP, hp))         continue;
+        if (!RPM(ent + Off::OBJ_TEAM, team))     continue;
         if (!RPM(ent + Off::OBJ_ORIGIN, origin)) continue;
 
         if (hp <= 0 || hp > 1000) continue;
         if (origin.x == 0.0f && origin.y == 0.0f && origin.z == 0.0f) continue;
 
-        // team check (skip if localTeam unknown)
-        if (cfg.teamCheck && g_localTeam != 0 && team == g_localTeam) continue;
+        const bool isLocal = (g_localPtr != 0 && ent == g_localPtr);
+        if (isLocal && !cfg.drawLocal) continue;
 
-        // head point
+        if (!isLocal && cfg.teamCheck && g_localTeam != 0 && team == g_localTeam)
+            continue;
+
         Vec3 head = origin;
         head.z += cfg.headOffset;
 
         Vec2 sf{}, shd{};
         if (!WorldToScreen(origin, sf, vm, sw, sh)) continue;
-        if (!WorldToScreen(head, shd, vm, sw, sh))   continue;
+        if (!WorldToScreen(head,   shd, vm, sw, sh)) continue;
 
         float h = sf.y - shd.y;
         if (h < 3.0f || h > 3000.0f) continue;
@@ -258,22 +284,32 @@ static void RenderESP() {
         float bx = shd.x - w * 0.5f;
         float by = shd.y;
 
-        // off-screen cull
         if (bx + w < 0 || bx > sw || by + h < 0 || by > sh) continue;
 
-        // distance
-        float dx = origin.x, dy = origin.y, dz = origin.z;
-        float dist = sqrtf(dx*dx + dy*dy + dz*dz) / 100.0f; // ~meters heuristic
-        if (cfg.maxDistance > 0 && dist > cfg.maxDistance) continue;
+        // distance from local player (if known), else from world origin
+        float dist;
+        if (g_haveLocal) {
+            float dx = origin.x - g_localPos.x;
+            float dy = origin.y - g_localPos.y;
+            float dz = origin.z - g_localPos.z;
+            dist = sqrtf(dx*dx + dy*dy + dz*dz);
+        } else {
+            dist = sqrtf(origin.x*origin.x + origin.y*origin.y + origin.z*origin.z);
+        }
+        if (cfg.maxDistance > 0.0f && dist > cfg.maxDistance) continue;
 
-        ImU32 col = C((g_localTeam != 0 && team == g_localTeam) ? cfg.mateColor : cfg.enemyColor);
+        ImU32 col;
+        if (isLocal)                          col = C(cfg.localColor);
+        else if (g_localTeam != 0 && team == g_localTeam) col = C(cfg.mateColor);
+        else                                  col = C(cfg.enemyColor);
 
         // ---- Box ----
         if (cfg.drawBox) {
-            dl->AddRect(ImVec2(bx, by), ImVec2(bx + w, by + h), col, 0.0f, 0, cfg.thickness);
+            dl->AddRect(ImVec2(bx, by), ImVec2(bx + w, by + h),
+                        col, 0.0f, 0, cfg.thickness);
         }
         if (cfg.drawCorners) {
-            DrawBoxCorner(dl, bx, by, w, h, col, cfg.thickness + 0.5f);
+            DrawCorners(dl, bx, by, w, h, col, cfg.thickness + 0.5f);
         }
 
         // ---- Health bar ----
@@ -281,23 +317,25 @@ static void RenderESP() {
             float frac = (float)hp / 100.0f;
             if (frac < 0.0f) frac = 0.0f;
             if (frac > 1.0f) frac = 1.0f;
-            float bw = 3.5f;
+            float bw  = 3.5f;
             float bxx = bx - bw - 4.0f;
-            dl->AddRectFilled(ImVec2(bxx, by), ImVec2(bxx + bw, by + h), IM_COL32(0,0,0,180));
-            ImU32 hc = frac > 0.6f ? IM_COL32(60,220,60,255)
-                      : frac > 0.3f ? IM_COL32(240,220,40,255)
-                                    : IM_COL32(240,60,60,255);
+            dl->AddRectFilled(ImVec2(bxx, by), ImVec2(bxx + bw, by + h),
+                              IM_COL32(0, 0, 0, 180));
+            ImU32 hc = frac > 0.6f ? IM_COL32(60, 220, 60, 255)
+                     : frac > 0.3f ? IM_COL32(240, 220, 40, 255)
+                                   : IM_COL32(240, 60, 60, 255);
             float fill = h * frac;
-            dl->AddRectFilled(ImVec2(bxx, by + h - fill), ImVec2(bxx + bw, by + h), hc);
+            dl->AddRectFilled(ImVec2(bxx, by + h - fill),
+                              ImVec2(bxx + bw, by + h), hc);
         }
 
-        // ---- Distance ----
+        // ---- Distance label ----
         if (cfg.drawDistance) {
-            char buf[32];
-            sprintf_s(buf, "[%d] %.0fm", i, dist);
+            char buf[48];
+            sprintf_s(buf, "#%d  %.0f", i, dist);
             ImVec2 ts = ImGui::CalcTextSize(buf);
             dl->AddText(ImVec2(bx + w * 0.5f - ts.x * 0.5f, by + h + 2.0f),
-                        IM_COL32(255,255,255,230), buf);
+                        IM_COL32(255, 255, 255, 230), buf);
         }
     }
 }
