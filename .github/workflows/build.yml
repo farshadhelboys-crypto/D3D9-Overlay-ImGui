@@ -1,0 +1,100 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: MSBuild Release x64
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Locate Windows SDK d3d9
+        id: sdk
+        shell: pwsh
+        run: |
+          $kitsRoot = "${env:ProgramFiles(x86)}\Windows Kits\10"
+          $libRoot = Join-Path $kitsRoot "Lib"
+          $incRoot = Join-Path $kitsRoot "Include"
+
+          $libVer = Get-ChildItem $libRoot -Directory |
+            Where-Object { Test-Path (Join-Path $_.FullName "um\x64\d3d9.lib") } |
+            Sort-Object Name -Descending |
+            Select-Object -First 1
+
+          $incVer = Get-ChildItem $incRoot -Directory |
+            Where-Object { Test-Path (Join-Path $_.FullName "um\d3d9.h") } |
+            Sort-Object Name -Descending |
+            Select-Object -First 1
+
+          if (-not $libVer -or -not $incVer) {
+            Write-Error "Could not find Windows SDK d3d9.lib / d3d9.h"
+            exit 1
+          }
+
+          $d3d9Lib = Join-Path $libVer.FullName "um\x64\d3d9.lib"
+          $umInclude = Join-Path $incVer.FullName "um"
+          $sharedInclude = Join-Path $incVer.FullName "shared"
+
+          Write-Host "d3d9.lib = $d3d9Lib"
+          Write-Host "Include  = $umInclude"
+
+          echo "d3d9_lib=$d3d9Lib" >> $env:GITHUB_OUTPUT
+          echo "um_include=$umInclude" >> $env:GITHUB_OUTPUT
+          echo "shared_include=$sharedInclude" >> $env:GITHUB_OUTPUT
+
+      - name: Patch project for CI (Windows SDK, no legacy DXSDK/D3DX)
+        shell: pwsh
+        run: |
+          $vcx = "Source\D3D9 Overlay ImGui\D3D9 Overlay ImGui.vcxproj"
+          $pch = "Source\D3D9 Overlay ImGui\pch.h"
+
+          # Remove d3dx9 dependency from precompiled header (not available in modern SDK)
+          (Get-Content $pch -Raw) `
+            -replace '#include "d3dx9.h"', '// #include "d3dx9.h" // removed for CI (legacy D3DX)' `
+            | Set-Content $pch -NoNewline
+
+          # Point includes/libs at Windows SDK d3d9 instead of $(DXSDK_DIR)
+          $xml = Get-Content $vcx -Raw
+
+          $xml = $xml -replace \
+            '\$\(DXSDK_DIR\)Include;', \
+            '${{ steps.sdk.outputs.um_include }};${{ steps.sdk.outputs.shared_include }};'
+
+          # Replace all DXSDK lib dependency lines with system d3d9 + shell32
+          $xml = [regex]::Replace($xml,
+            '<AdditionalDependencies>.*?</AdditionalDependencies>',
+            '<AdditionalDependencies>${{ steps.sdk.outputs.d3d9_lib }};shell32.lib;dwmapi.lib;%(AdditionalDependencies)</AdditionalDependencies>')
+
+          Set-Content $vcx $xml -NoNewline
+          Write-Host "Patched vcxproj and pch.h for CI build"
+
+      - name: Build solution (Release | x64)
+        working-directory: Source
+        run: |
+          msbuild "D3D9 Overlay ImGui.sln" ^
+            /m ^
+            /p:Configuration=Release ^
+            /p:Platform=x64 ^
+            /p:PlatformToolset=v143 ^
+            /p:WindowsTargetPlatformVersion=10.0 ^
+            /verbosity:minimal
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: D3D9-Overlay-ImGui-x64-Release
+          path: |
+            Source/**/Release/**/*.exe
+            Source/**/x64/Release/**/*.exe
+          if-no-files-found: warn
