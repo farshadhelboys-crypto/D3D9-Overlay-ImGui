@@ -8,7 +8,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cfloat>
-#include <imgui.h>
+#include "ImGui/imgui.h"
 #include "UI.h"
 #include "esp.h"
 
@@ -18,7 +18,6 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-// ---------------- LANGUAGE ----------------
 enum class Lang { EN = 0, FA = 1 };
 static Lang g_lang = Lang::EN;
 
@@ -28,9 +27,8 @@ struct Loc {
     const char* operator()() const { return g_lang == Lang::FA ? fa : en; }
 };
 
-// All UI strings (UTF-8)
 static const Loc L_Title        = { "farshad pm Esp",           "farshad pm Esp" };
-static const Loc L_Language     = { "Language",                 "\xd8\xb2\xd8\xa8\xd8\xa7\xd9\x86" };
+static const Loc L_Language     = { "Language",                 "Language" };
 static const Loc L_EnableESP    = { "Enable ESP",               "Enable ESP" };
 static const Loc L_Reattach     = { "Re-attach",                "Re-attach" };
 static const Loc L_Filters      = { "Filters",                  "Filters" };
@@ -61,9 +59,6 @@ static const Loc L_Contact      = { "Contact",                  "Contact" };
 static const Loc L_Telegram     = { "Telegram:",                "Telegram:" };
 static const Loc L_OpenTG       = { "Open Telegram",            "Open Telegram" };
 static const Loc L_CopyTG       = { "Copy @client_v34",         "Copy @client_v34" };
-
-// NOTE: Full bilingual strings restored below via proper UTF-8 file
-// This intermediate fix focuses on hiding offsets.
 
 namespace Off {
     constexpr uintptr_t ENTITY_ARRAY_PTR = 0x25B9390;
@@ -139,7 +134,7 @@ static void Detach() {
     if (g_hProc) { CloseHandle(g_hProc); g_hProc = nullptr; }
     g_gameBase = 0; g_attachedPid = 0; g_localTeam = 0; g_localPtr = 0; g_haveLocal = false;
     g_dbgCount = 0; g_dbgDrawn = 0; g_dbgVmOk = false;
-    strcpy_s(g_status, g_lang == Lang::FA ? "Not attached" : "Not attached");
+    strcpy_s(g_status, "Not attached");
 }
 
 static bool AttachFromUI() {
@@ -157,7 +152,7 @@ static bool AttachFromUI() {
         CloseHandle(g_hProc); g_hProc = nullptr; return false;
     }
     g_attachedPid = pid;
-    sprintf_s(g_status, "Attached — PID: %lu", (unsigned long)pid);
+    sprintf_s(g_status, "Attached - PID: %lu", (unsigned long)pid);
     return true;
 }
 
@@ -303,7 +298,6 @@ void RenderESPMenu() {
         ImGui::Combo(L_Side(), &cfg.healthSide, "Left\0Right\0Top\0Bottom\0");
     }
 
-    // Advanced — NO raw offsets shown
     if (ImGui::CollapsingHeader(L_MatrixEntity(), ImGuiTreeNodeFlags_DefaultOpen)) {
         const char* matrixItems = "Option 1 (Default)\0Option 2 (Backup)\0";
         ImGui::Combo(L_MatrixSrc(), &cfg.matrixChoice, matrixItems);
