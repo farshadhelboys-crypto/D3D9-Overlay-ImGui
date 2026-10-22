@@ -214,8 +214,8 @@ static void DrawHealthBar(ImDrawList* dl, float bx, float by, float w, float h, 
     }
 }
 
-static inline ImVec2 RotatePoint(const ImVec2& v, float s, float c) {
-    return ImVec2(v.x * c - v.y * s, v.x * s + v.y * c);
+static inline ImVec2 RotatePoint(float x, float y, float s, float c) {
+    return ImVec2(x * c - y * s, x * s + y * c);
 }
 static int g_RotateStartIdx = -1;
 static void ImRotateStart(ImDrawList* dl) { g_RotateStartIdx = dl->VtxBuffer.Size; }
@@ -223,8 +223,11 @@ static void ImRotateEnd(ImDrawList* dl, float rad, ImVec2 center) {
     float s = sinf(rad), c = cosf(rad);
     for (int i = g_RotateStartIdx; i < dl->VtxBuffer.Size; i++) {
         ImDrawVert& v = dl->VtxBuffer.Data[i];
-        ImVec2 p = v.pos - center;
-        v.pos = RotatePoint(p, s, c) + center;
+        float px = v.pos.x - center.x;
+        float py = v.pos.y - center.y;
+        ImVec2 r = RotatePoint(px, py, s, c);
+        v.pos.x = r.x + center.x;
+        v.pos.y = r.y + center.y;
     }
 }
 
