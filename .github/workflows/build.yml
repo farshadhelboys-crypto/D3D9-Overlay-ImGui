@@ -9,8 +9,12 @@ on:
 
 jobs:
   build:
-    name: MSBuild Release x64
+    name: MSBuild Release (${{ matrix.platform }})
     runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [x64, Win32]
 
     steps:
       - name: Checkout
@@ -23,9 +27,11 @@ jobs:
         id: sdk
         shell: pwsh
         run: |
-          Write-Host "Searching for d3d9.lib / d3d9.h ..."
+          $arch = if ("${{ matrix.platform }}" -eq "x64") { "x64" } else { "x86" }
+          Write-Host "Searching for d3d9.lib ($arch) / d3d9.h ..."
+
           $d3d9Lib = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\Lib" -Recurse -Filter d3d9.lib -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match '\\um\\x64\\' } |
+            Where-Object { $_.FullName -match "\\um\\$arch\\" } |
             Sort-Object FullName -Descending |
             Select-Object -First 1 -ExpandProperty FullName
 
@@ -35,15 +41,13 @@ jobs:
             Select-Object -First 1
 
           if (-not $d3d9Lib) {
-            # Fallback: search whole Program Files
             $d3d9Lib = Get-ChildItem "${env:ProgramFiles(x86)}" -Recurse -Filter d3d9.lib -ErrorAction SilentlyContinue |
-              Where-Object { $_.FullName -match 'x64' } |
+              Where-Object { $_.FullName -match $arch } |
               Select-Object -First 1 -ExpandProperty FullName
           }
 
           if (-not $d3d9Lib) {
-            Write-Error "d3d9.lib not found on runner"
-            Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits" -ErrorAction SilentlyContinue | Format-Table
+            Write-Error "d3d9.lib not found for $arch"
             exit 1
           }
 
@@ -67,45 +71,35 @@ jobs:
           $vcx = "Source\D3D9 Overlay ImGui\D3D9 Overlay ImGui.vcxproj"
           $pch = "Source\D3D9 Overlay ImGui\pch.h"
 
-          # Drop legacy D3DX (not in modern Windows SDK)
           $pchText = Get-Content $pch -Raw
           $pchText = $pchText -replace '#include\s+"d3dx9\.h"', '// d3dx9 removed for CI'
           $pchText = $pchText -replace '#include\s+"d3d9\.h"', '#include <d3d9.h>'
           Set-Content -Path $pch -Value $pchText -NoNewline
 
           $xml = Get-Content $vcx -Raw
-
-          # Replace DXSDK include with Windows SDK um/shared
-          $inc = "$env:UM_INC;$env:SHARED_INC;"
-          $xml = $xml -replace '\$\(DXSDK_DIR\)Include;', [regex]::Escape($inc).Replace('\','\')
-          # simpler literal replace:
-          $xml = (Get-Content $vcx -Raw)
           $xml = $xml.Replace('$(DXSDK_DIR)Include;', "$env:UM_INC;$env:SHARED_INC;")
 
-          # Replace AdditionalDependencies blocks to use discovered d3d9.lib
           $deps = "$env:D3D9_LIB;shell32.lib;dwmapi.lib;%(AdditionalDependencies)"
           $xml = [regex]::Replace($xml,
             '<AdditionalDependencies>[\s\S]*?</AdditionalDependencies>',
             "<AdditionalDependencies>$deps</AdditionalDependencies>")
 
           Set-Content -Path $vcx -Value $xml -NoNewline
-          Write-Host "--- pch.h ---"
-          Get-Content $pch
           Write-Host "--- deps sample ---"
           Select-String -Path $vcx -Pattern 'AdditionalDependencies' | Select-Object -First 2
 
-      - name: Build (Release x64)
+      - name: Build (Release ${{ matrix.platform }})
         working-directory: Source
         shell: cmd
         run: |
-          msbuild "D3D9 Overlay ImGui.sln" /m /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /verbosity:minimal
+          msbuild "D3D9 Overlay ImGui.sln" /m /p:Configuration=Release /p:Platform=${{ matrix.platform }} /p:PlatformToolset=v143 /verbosity:minimal
 
       - name: Upload artifact
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: D3D9-Overlay-ImGui-x64-Release
+          name: D3D9-Overlay-ImGui-${{ matrix.platform }}-Release
           path: |
-            Source/**/x64/Release/*.exe
+            Source/**/${{ matrix.platform }}/Release/*.exe
             Source/**/Release/*.exe
           if-no-files-found: warn
