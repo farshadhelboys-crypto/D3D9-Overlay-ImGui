@@ -1,6 +1,6 @@
 // =====================================================================
-//  ESP - Integrated with UI / Drawing framework (EN / FA bilingual)
-//  Updated with WORKING offsets from verified Python ESP (2026-10-24)
+//  ESP - VTable only + anti-blink + test aimbot
+//  (EN / FA bilingual)  - 2026-10-25
 // =====================================================================
 #include <Windows.h>
 #include <TlHelp32.h>
@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cfloat>
 #include <vector>
+#include <algorithm>
 #include "ImGui/imgui.h"
 #include "UI.h"
 #include "esp.h"
@@ -32,7 +33,7 @@ struct Loc {
 static const Loc L_Title        = { "farshad pm Esp",           "farshad pm Esp" };
 static const Loc L_Language     = { "Language",                 "Language" };
 static const Loc L_EnableESP    = { "Enable ESP",               "Enable ESP" };
-static const Loc L_Reattach     = { "Re-attach",                "Re-attach" };
+static const Loc L_Reattach     = { "Re-attach / Rescan",       "Re-attach / Rescan" };
 static const Loc L_Filters      = { "Filters",                  "Filters" };
 static const Loc L_TeamCheck    = { "Team Check",               "Team Check" };
 static const Loc L_MaxDist      = { "Max Distance",             "Max Distance" };
@@ -41,7 +42,6 @@ static const Loc L_Box          = { "Box",                      "Box" };
 static const Loc L_Corners      = { "Corners",                  "Corners" };
 static const Loc L_HealthBar    = { "Health Bar",               "Health Bar" };
 static const Loc L_Distance     = { "Distance",                 "Distance" };
-static const Loc L_DrawLocal    = { "Draw Local Player",        "Draw Local Player" };
 static const Loc L_BoxTuning    = { "Box Tuning",               "Box Tuning" };
 static const Loc L_Thickness    = { "Thickness",                "Thickness" };
 static const Loc L_HeadOffset   = { "Head Offset",              "Head Offset" };
@@ -49,11 +49,13 @@ static const Loc L_WidthRatio   = { "Width Ratio",              "Width Ratio" };
 static const Loc L_Health       = { "Health Bar",               "Health Bar" };
 static const Loc L_MaxHP        = { "Max HP",                   "Max HP" };
 static const Loc L_Side         = { "Side",                     "Side" };
-static const Loc L_MatrixEntity = { "Advanced",                 "Advanced" };
+static const Loc L_Aimbot       = { "Test Aimbot",              "Test Aimbot" };
+static const Loc L_AimEnable    = { "Enable Aimbot (test)",     "Enable Aimbot (test)" };
+static const Loc L_AimSmooth    = { "Smooth",                   "Smooth" };
+static const Loc L_AimFov       = { "FOV (px)",                 "FOV (px)" };
 static const Loc L_Colors       = { "Colors",                   "Colors" };
 static const Loc L_Enemy        = { "Enemy",                    "Enemy" };
 static const Loc L_Mate         = { "Mate",                     "Mate" };
-static const Loc L_Local        = { "Local",                    "Local" };
 static const Loc L_Debug        = { "Debug",                    "Debug" };
 static const Loc L_Contact      = { "Contact",                  "Contact" };
 static const Loc L_Telegram     = { "Telegram:",                "Telegram:" };
@@ -61,67 +63,61 @@ static const Loc L_OpenTG       = { "Open Telegram",            "Open Telegram" 
 static const Loc L_CopyTG       = { "Copy @client_v34",         "Copy @client_v34" };
 
 // ============================================================
-// WORKING OFFSETS (from verified Python ESP - 2026-10-24)
+// WORKING OFFSETS (VTable path - works offline + online)
 // ============================================================
 namespace Off {
-    // Local player direct floats (module relative)
     constexpr uintptr_t MY_POS_X     = 0x242F510;
     constexpr uintptr_t MY_POS_Y     = 0x242F514;
     constexpr uintptr_t MY_POS_Z     = 0x242F518;
-    constexpr uintptr_t MY_YAW       = 0x25982CC;
-    constexpr uintptr_t MY_PITCH     = 0x25982D0;
 
-    // View Matrix (module relative) - verified working
     constexpr uintptr_t MATRIX_RVA   = 0x27603D0;
 
-    // Offline Entity Array (V8 style)
-    constexpr uintptr_t PLAYER_ARRAY_RVA = 0x26B2364;
-    constexpr uintptr_t ARR_STRIDE       = 0x14;
-    constexpr uintptr_t ARR_OBJ_OFF      = 0x0C;
-    constexpr uintptr_t OBJ_POS_OFF      = 0x290;
-    constexpr uintptr_t OBJ_HP_OFF       = 0x11C;
-    constexpr uintptr_t OBJ_TEAM_OFF     = 0xD4;
-
-    // Online VTable signatures (module relative)
+    // VTable signatures (module relative)
     constexpr uintptr_t VTABLE_1     = 0x01DDAC3C;
     constexpr uintptr_t VTABLE_2     = 0x01DDA9C8;
     constexpr uintptr_t V_OBJ_ORIGIN = 0x538;
 
-    // Optional resource table
-    constexpr uintptr_t PLAYER_RES_RVA = 0x2478218;
-    constexpr uintptr_t RES_HP         = 0x1270;
-    constexpr uintptr_t RES_TEAM       = 0x1128;
+    // Optional (if readable on object)
+    constexpr uintptr_t OBJ_HP_OFF   = 0x11C;
+    constexpr uintptr_t OBJ_TEAM_OFF = 0xD4;
 }
 
 struct Vec3 { float x, y, z; };
 struct Vec2 { float x, y; };
+
+struct TrackedEntity {
+    uintptr_t obj = 0;
+    Vec3      pos = {0,0,0};
+    int       hp = 0;
+    int       team = 0;
+    int       life = 0;          // frames left if read fails (anti-blink)
+    bool      valid = false;
+};
 
 struct EspConfig {
     bool  enabled       = true;
     bool  teamCheck     = false;
     bool  drawBox       = true;
     bool  drawCorners   = false;
-    bool  drawHealth    = true;
+    bool  drawHealth    = false;
     bool  drawDistance  = true;
-    bool  drawLocal     = true;
-    bool  useOffline    = true;   // V8 array
-    bool  useOnline     = false;  // VTable objects (heavier)
+    bool  aimbot        = false;
+    float aimSmooth     = 6.0f;
+    float aimFov        = 180.0f;
     float headOffset    = 72.0f;
-    float widthRatio    = 0.45f;
+    float widthRatio    = 0.42f;
     float thickness     = 1.8f;
-    float maxDistance   = 1500.0f;
+    float maxDistance   = 2000.0f;
     float healthMax     = 100.0f;
     int   healthSide    = 0;
     ImVec4 enemyColor   = ImVec4(1.00f, 0.25f, 0.25f, 1.00f);
     ImVec4 mateColor    = ImVec4(0.25f, 0.85f, 1.00f, 1.00f);
-    ImVec4 localColor   = ImVec4(0.20f, 1.00f, 0.30f, 1.00f);
 } cfg;
 
 static HANDLE     g_hProc       = nullptr;
 static uintptr_t  g_gameBase    = 0;
 static DWORD      g_attachedPid = 0;
 static HWND       g_lastTarget  = nullptr;
-static int        g_localTeam   = 0;
 static Vec3       g_localPos    = {0, 0, 0};
 static bool       g_haveLocal   = false;
 static char       g_status[160] = "Not attached";
@@ -129,21 +125,16 @@ static int        g_dbgCount    = 0;
 static int        g_dbgDrawn    = 0;
 static bool       g_dbgVmOk     = false;
 
-// Cached online objects (scanned once on attach / re-attach)
-static std::vector<uintptr_t> g_vObjects;
-static bool g_vObjectsScanned = false;
+static std::vector<uintptr_t>     g_rawObjects;   // scanned once
+static std::vector<TrackedEntity> g_tracked;      // persistent for anti-blink
+static bool g_scanned = false;
+
+static const int kMaxLife = 8;   // keep drawing for N frames if one read fails
 
 template<typename T>
 static inline bool RPM(uintptr_t addr, T& out) {
     SIZE_T read = 0;
     return ReadProcessMemory(g_hProc, (LPCVOID)addr, &out, sizeof(T), &read) && read == sizeof(T);
-}
-
-static inline bool ReadPtr(uintptr_t addr, uintptr_t& out) {
-    uint32_t tmp = 0;
-    if (!RPM(addr, tmp)) return false;
-    out = (uintptr_t)tmp;
-    return true;
 }
 
 static uintptr_t GetModuleBase(DWORD pid, const wchar_t* mod) {
@@ -162,18 +153,20 @@ static uintptr_t GetModuleBase(DWORD pid, const wchar_t* mod) {
 
 static void Detach() {
     if (g_hProc) { CloseHandle(g_hProc); g_hProc = nullptr; }
-    g_gameBase = 0; g_attachedPid = 0; g_localTeam = 0;
+    g_gameBase = 0; g_attachedPid = 0;
     g_haveLocal = false;
     g_dbgCount = 0; g_dbgDrawn = 0; g_dbgVmOk = false;
-    g_vObjects.clear();
-    g_vObjectsScanned = false;
+    g_rawObjects.clear();
+    g_tracked.clear();
+    g_scanned = false;
     strcpy_s(g_status, "Not attached");
 }
 
-// Lightweight VTable object scan (only called on attach)
+// Scan VTable objects once (same idea as working Python)
 static void ScanVTableObjects() {
-    g_vObjects.clear();
-    g_vObjectsScanned = false;
+    g_rawObjects.clear();
+    g_tracked.clear();
+    g_scanned = false;
     if (!g_hProc || !g_gameBase) return;
 
     const uint32_t targets[2] = {
@@ -181,11 +174,10 @@ static void ScanVTableObjects() {
         (uint32_t)(g_gameBase + Off::VTABLE_2)
     };
 
-    // Scan a reasonable heap range (same idea as Python but limited for speed)
-    // Full 0x10000000-0x40000000 is too slow for realtime; we do a lighter pass.
+    // Same range style as Python, chunked for speed
     const uintptr_t start = 0x10000000;
-    const uintptr_t end   = 0x30000000;
-    const size_t chunk = 0x100000; // 1 MB
+    const uintptr_t end   = 0x40000000;
+    const size_t chunk = 0x100000;
 
     std::vector<uint8_t> buf(chunk);
 
@@ -197,11 +189,23 @@ static void ScanVTableObjects() {
         for (size_t i = 0; i + 4 <= bytesRead; i += 4) {
             uint32_t val = *reinterpret_cast<uint32_t*>(buf.data() + i);
             if (val == targets[0] || val == targets[1]) {
-                g_vObjects.push_back(addr + i);
+                g_rawObjects.push_back(addr + i);
             }
         }
     }
-    g_vObjectsScanned = true;
+
+    // Init tracked list
+    g_tracked.reserve(g_rawObjects.size());
+    for (uintptr_t o : g_rawObjects) {
+        TrackedEntity te;
+        te.obj = o;
+        te.life = 0;
+        te.valid = false;
+        g_tracked.push_back(te);
+    }
+
+    g_scanned = true;
+    sprintf_s(g_status, "Attached | VTable objects: %zu", g_rawObjects.size());
 }
 
 static bool AttachFromUI() {
@@ -222,55 +226,37 @@ static bool AttachFromUI() {
     }
     g_attachedPid = pid;
 
-    // Optional: scan online objects (can take 1-3 seconds)
-    if (cfg.useOnline) {
-        strcpy_s(g_status, "Scanning VTable objects...");
-        ScanVTableObjects();
-        sprintf_s(g_status, "Attached - PID %lu | VObj %zu", (unsigned long)pid, g_vObjects.size());
-    } else {
-        sprintf_s(g_status, "Attached - PID %lu | Base 0x%llX", (unsigned long)pid, (unsigned long long)g_gameBase);
-    }
+    strcpy_s(g_status, "Scanning VTable objects (wait)...");
+    ScanVTableObjects();
     return true;
 }
 
-// -----------------------------------------------------------------
-// Local player (direct floats - verified working)
-// -----------------------------------------------------------------
 static void UpdateLocal() {
     g_haveLocal = false;
-    g_localTeam = 0;
     if (!g_hProc || !g_gameBase) return;
-
     Vec3 pos{};
     if (RPM(g_gameBase + Off::MY_POS_X, pos.x) &&
         RPM(g_gameBase + Off::MY_POS_Y, pos.y) &&
         RPM(g_gameBase + Off::MY_POS_Z, pos.z)) {
-        if (fabsf(pos.x) > 1.0f || fabsf(pos.y) > 1.0f || fabsf(pos.z) > 1.0f) {
+        if (fabsf(pos.x) > 0.5f || fabsf(pos.y) > 0.5f || fabsf(pos.z) > 0.5f) {
             g_localPos = pos;
             g_haveLocal = true;
         }
     }
 }
 
-// -----------------------------------------------------------------
-// WorldToScreen matching the working Python layout
-// mat layout used by the verified script:
-// cx = m[0]*x + m[1]*y + m[2]*z + m[3]
-// cy = m[4]*x + m[5]*y + m[6]*z + m[7]
-// cw = m[12]*x + m[13]*y + m[14]*z + m[15]
-// -----------------------------------------------------------------
+// W2S matching working Python matrix layout
 static bool WorldToScreen(const Vec3& pos, const float* mat, float sw, float sh, Vec2& out) {
     float cx = mat[0] * pos.x + mat[1] * pos.y + mat[2] * pos.z + mat[3];
     float cy = mat[4] * pos.x + mat[5] * pos.y + mat[6] * pos.z + mat[7];
     float cw = mat[12] * pos.x + mat[13] * pos.y + mat[14] * pos.z + mat[15];
 
     if (fabsf(cw) < 0.001f) return false;
-    if (cw < 0.2f) return false; // behind camera-ish
+    if (cw < 0.15f) return false;
 
     float ndc_x = cx / cw;
     float ndc_y = cy / cw;
 
-    // Standard conversion (more stable than the Python variant)
     out.x = (sw * 0.5f) * (1.0f + ndc_x);
     out.y = (sh * 0.5f) * (1.0f - ndc_y);
     return true;
@@ -326,7 +312,6 @@ static void ImRotateEnd(ImDrawList* dl, float rad, ImVec2 center) {
         v.pos.y = r.y + center.y;
     }
 }
-
 static void DrawRotatingLogo() {
     ImDrawList* dl = ImGui::GetBackgroundDrawList();
     if (!dl) return;
@@ -353,16 +338,33 @@ static void DrawRotatingLogo() {
     ImRotateEnd(dl, angle, ImVec2(posX, posY));
 }
 
-// -----------------------------------------------------------------
-// Menu
-// -----------------------------------------------------------------
+// Simple external aimbot: move mouse toward closest box center inside FOV
+static void RunTestAimbot(float targetX, float targetY, float sw, float sh) {
+    if (!cfg.aimbot) return;
+
+    float cx = sw * 0.5f;
+    float cy = sh * 0.5f;
+    float dx = targetX - cx;
+    float dy = targetY - cy;
+    float dist = sqrtf(dx*dx + dy*dy);
+    if (dist < 2.0f || dist > cfg.aimFov) return;
+
+    float smooth = cfg.aimSmooth < 1.0f ? 1.0f : cfg.aimSmooth;
+    int mx = (int)(dx / smooth);
+    int my = (int)(dy / smooth);
+
+    if (mx != 0 || my != 0) {
+        mouse_event(MOUSEEVENTF_MOVE, mx, my, 0, 0);
+    }
+}
+
 void RenderESPMenu() {
     if (!UI::IsWindowTargeted()) return;
-    ImGui::SetNextWindowSize(ImVec2(380, 780), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(380, 720), ImGuiCond_FirstUseEver);
     ImGui::Begin(L_Title(), nullptr, ImGuiWindowFlags_NoCollapse);
 
     ImGui::TextColored(ImVec4(0.40f, 0.85f, 1.00f, 1.00f), "%s", L_Title());
-    ImGui::SameLine(); ImGui::TextDisabled("v2.0 (Working offsets)");
+    ImGui::SameLine(); ImGui::TextDisabled("v2.1 VTable");
     ImGui::Separator();
 
     ImGui::Text("%s", L_Language());
@@ -380,41 +382,38 @@ void RenderESPMenu() {
 
     if (ImGui::CollapsingHeader(L_Filters(), ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Checkbox(L_TeamCheck(), &cfg.teamCheck);
-        ImGui::SameLine(); ImGui::TextDisabled("(LocalTeam=%d)", g_localTeam);
-        ImGui::SliderFloat(L_MaxDist(), &cfg.maxDistance, 0.0f, 3000.0f, "%.0f");
+        ImGui::SliderFloat(L_MaxDist(), &cfg.maxDistance, 50.0f, 4000.0f, "%.0f");
     }
     if (ImGui::CollapsingHeader(L_Visuals(), ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Checkbox(L_Box(), &cfg.drawBox); ImGui::SameLine();
         ImGui::Checkbox(L_Corners(), &cfg.drawCorners);
         ImGui::Checkbox(L_HealthBar(), &cfg.drawHealth); ImGui::SameLine();
         ImGui::Checkbox(L_Distance(), &cfg.drawDistance);
-        ImGui::Checkbox(L_DrawLocal(), &cfg.drawLocal);
-        ImGui::Checkbox("Offline Array (V8)", &cfg.useOffline);
-        ImGui::Checkbox("Online VTable (slow scan)", &cfg.useOnline);
     }
     if (ImGui::CollapsingHeader(L_BoxTuning(), ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::SliderFloat(L_Thickness(), &cfg.thickness, 0.5f, 5.0f, "%.1f");
         ImGui::SliderFloat(L_HeadOffset(), &cfg.headOffset, 40.0f, 120.0f, "%.0f");
         ImGui::SliderFloat(L_WidthRatio(), &cfg.widthRatio, 0.2f, 0.8f, "%.2f");
     }
-    if (ImGui::CollapsingHeader(L_Health())) {
-        ImGui::SliderFloat(L_MaxHP(), &cfg.healthMax, 50.0f, 500.0f, "%.0f");
-        ImGui::Combo(L_Side(), &cfg.healthSide, "Left\0Right\0Top\0Bottom\0");
+    if (ImGui::CollapsingHeader(L_Aimbot(), ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Checkbox(L_AimEnable(), &cfg.aimbot);
+        ImGui::SliderFloat(L_AimSmooth(), &cfg.aimSmooth, 1.0f, 20.0f, "%.1f");
+        ImGui::SliderFloat(L_AimFov(), &cfg.aimFov, 30.0f, 500.0f, "%.0f");
+        ImGui::TextDisabled("Aims at closest box center inside FOV");
     }
     if (ImGui::CollapsingHeader(L_Colors())) {
         ImGui::ColorEdit4(L_Enemy(), (float*)&cfg.enemyColor);
         ImGui::ColorEdit4(L_Mate(), (float*)&cfg.mateColor);
-        ImGui::ColorEdit4(L_Local(), (float*)&cfg.localColor);
     }
     if (ImGui::CollapsingHeader(L_Debug(), ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Text("PID         : %lu", (unsigned long)g_attachedPid);
         ImGui::Text("Base        : 0x%llX", (unsigned long long)g_gameBase);
         ImGui::Text("Have Local  : %s", g_haveLocal ? "YES" : "NO");
-        ImGui::Text("Local Pos   : %.1f  %.1f  %.1f", g_localPos.x, g_localPos.y, g_localPos.z);
+        ImGui::Text("Local Pos   : %.1f %.1f %.1f", g_localPos.x, g_localPos.y, g_localPos.z);
         ImGui::Text("Matrix OK   : %s", g_dbgVmOk ? "yes" : "no");
-        ImGui::Text("Entities    : %d", g_dbgCount);
+        ImGui::Text("Raw VObjs   : %zu", g_rawObjects.size());
+        ImGui::Text("Tracked     : %d", g_dbgCount);
         ImGui::Text("Drawn       : %d", g_dbgDrawn);
-        ImGui::Text("VTable objs : %zu", g_vObjects.size());
     }
 
     ImGui::Separator();
@@ -441,9 +440,6 @@ void RenderESPMenu() {
     ImGui::End();
 }
 
-// -----------------------------------------------------------------
-// Main draw
-// -----------------------------------------------------------------
 void RenderESPBoxes() {
     if (UI::IsWindowTargeted()) DrawRotatingLogo();
 
@@ -456,6 +452,7 @@ void RenderESPBoxes() {
 
     UpdateLocal();
     if (!cfg.enabled) return;
+    if (!g_scanned) return;
 
     ImGuiIO& io = ImGui::GetIO();
     const float sw = io.DisplaySize.x;
@@ -463,7 +460,7 @@ void RenderESPBoxes() {
     ImDrawList* dl = ImGui::GetBackgroundDrawList();
     if (!dl) return;
 
-    // ---- Read View Matrix (direct RVA that works in Python) ----
+    // Matrix
     float mat[16] = {};
     g_dbgVmOk = RPM(g_gameBase + Off::MATRIX_RVA, mat);
     if (!g_dbgVmOk) {
@@ -474,126 +471,109 @@ void RenderESPBoxes() {
     g_dbgDrawn = 0;
     g_dbgCount = 0;
 
-    // ---- Draw Local Player marker ----
-    if (g_haveLocal && cfg.drawLocal) {
-        Vec2 screen{};
-        if (WorldToScreen(g_localPos, mat, sw, sh, screen)) {
-            dl->AddCircleFilled(ImVec2(screen.x, screen.y), 5.0f, IM_COL32(50, 255, 50, 220), 12);
-            dl->AddCircle(ImVec2(screen.x, screen.y), 7.0f, IM_COL32(0, 0, 0, 200), 12, 2.0f);
-            dl->AddText(ImVec2(screen.x + 10, screen.y - 8), IM_COL32(50, 255, 50, 255), "YOU");
-            ++g_dbgDrawn;
+    // Best aim target this frame
+    float bestAimDist = 1e9f;
+    float bestAimX = 0, bestAimY = 0;
+    bool  hasAimTarget = false;
+
+    // Update tracked entities (anti-blink)
+    for (auto& te : g_tracked) {
+        Vec3 origin{};
+        bool ok = RPM(te.obj + Off::V_OBJ_ORIGIN, origin.x) &&
+                  RPM(te.obj + Off::V_OBJ_ORIGIN + 4, origin.y) &&
+                  RPM(te.obj + Off::V_OBJ_ORIGIN + 8, origin.z);
+
+        if (ok) {
+            // basic validity
+            if (fabsf(origin.x) > 30000.0f || fabsf(origin.y) > 30000.0f || fabsf(origin.z) > 30000.0f)
+                ok = false;
+            if (fabsf(origin.x) < 0.05f && fabsf(origin.y) < 0.05f)
+                ok = false;
         }
-    }
 
-    // ============================================================
-    // OFFLINE ARRAY (V8 style) - main reliable path
-    // ============================================================
-    if (cfg.useOffline) {
-        for (int i = 0; i < 64; ++i) {
-            uintptr_t slot = g_gameBase + Off::PLAYER_ARRAY_RVA + (uintptr_t)i * Off::ARR_STRIDE;
-            uintptr_t obj = 0;
-            if (!ReadPtr(slot + Off::ARR_OBJ_OFF, obj) || obj < 0x10000) continue;
-
-            Vec3 origin{};
-            if (!RPM(obj + Off::OBJ_POS_OFF, origin.x)) continue;
-            if (!RPM(obj + Off::OBJ_POS_OFF + 4, origin.y)) continue;
-            if (!RPM(obj + Off::OBJ_POS_OFF + 8, origin.z)) continue;
-
-            if (fabsf(origin.x) < 1.0f || fabsf(origin.x) > 20000.0f) continue;
+        if (ok) {
+            te.pos = origin;
+            te.life = kMaxLife;
+            te.valid = true;
 
             int hp = 0, team = 0;
-            RPM(obj + Off::OBJ_HP_OFF, hp);
-            RPM(obj + Off::OBJ_TEAM_OFF, team);
+            RPM(te.obj + Off::OBJ_HP_OFF, hp);
+            RPM(te.obj + Off::OBJ_TEAM_OFF, team);
+            te.hp = hp;
+            te.team = team;
+        } else {
+            if (te.life > 0) te.life--;
+            if (te.life <= 0) te.valid = false;
+        }
 
-            float dist = 0.0f;
-            if (g_haveLocal) {
-                float dx = origin.x - g_localPos.x;
-                float dy = origin.y - g_localPos.y;
-                float dz = origin.z - g_localPos.z;
-                dist = sqrtf(dx*dx + dy*dy + dz*dz);
+        if (!te.valid) continue;
+
+        // distance filter
+        float dist = 0.0f;
+        if (g_haveLocal) {
+            float dx = te.pos.x - g_localPos.x;
+            float dy = te.pos.y - g_localPos.y;
+            float dz = te.pos.z - g_localPos.z;
+            dist = sqrtf(dx*dx + dy*dy + dz*dz);
+        }
+        if (dist < 40.0f || dist > cfg.maxDistance) continue; // skip very close (usually self)
+
+        ++g_dbgCount;
+
+        Vec3 head = te.pos;
+        head.z += cfg.headOffset;
+
+        Vec2 feet{}, headScr{};
+        if (!WorldToScreen(te.pos, mat, sw, sh, feet)) continue;
+        if (!WorldToScreen(head, mat, sw, sh, headScr)) continue;
+
+        float h = feet.y - headScr.y;
+        if (h < 6.0f || h > 1800.0f) continue;
+        float w = h * cfg.widthRatio;
+        float bx = headScr.x - w * 0.5f;
+        float by = headScr.y;
+
+        // center of box for aimbot
+        float boxCx = bx + w * 0.5f;
+        float boxCy = by + h * 0.5f;
+
+        ImU32 col = C(cfg.enemyColor);
+
+        if (cfg.drawBox)
+            dl->AddRect(ImVec2(bx, by), ImVec2(bx + w, by + h), col, 0.0f, 0, cfg.thickness);
+        if (cfg.drawCorners)
+            DrawCorners(dl, bx, by, w, h, col, cfg.thickness + 0.5f);
+        if (cfg.drawHealth && te.hp > 0)
+            DrawHealthBar(dl, bx, by, w, h, (float)te.hp / cfg.healthMax, cfg.healthSide);
+        if (cfg.drawDistance) {
+            char buf[32];
+            sprintf_s(buf, "%.0fm", dist);
+            ImVec2 ts = ImGui::CalcTextSize(buf);
+            dl->AddText(ImVec2(bx + w * 0.5f - ts.x * 0.5f, by + h + 2.0f), IM_COL32(255, 255, 255, 230), buf);
+        }
+
+        ++g_dbgDrawn;
+
+        // aimbot candidate
+        if (cfg.aimbot) {
+            float adx = boxCx - sw * 0.5f;
+            float ady = boxCy - sh * 0.5f;
+            float ad = sqrtf(adx*adx + ady*ady);
+            if (ad < bestAimDist && ad < cfg.aimFov) {
+                bestAimDist = ad;
+                bestAimX = boxCx;
+                bestAimY = boxCy;
+                hasAimTarget = true;
             }
-            if (dist < 3.0f || dist > cfg.maxDistance) continue;
-
-            if (cfg.teamCheck && g_localTeam != 0 && team == g_localTeam) continue;
-
-            Vec3 head = origin;
-            head.z += cfg.headOffset;
-
-            Vec2 feet{}, headScr{};
-            if (!WorldToScreen(origin, mat, sw, sh, feet)) continue;
-            if (!WorldToScreen(head, mat, sw, sh, headScr)) continue;
-
-            float h = feet.y - headScr.y;
-            if (h < 4.0f || h > 2000.0f) continue;
-            float w = h * cfg.widthRatio;
-            float bx = headScr.x - w * 0.5f;
-            float by = headScr.y;
-
-            ImU32 col = (g_localTeam != 0 && team == g_localTeam) ? C(cfg.mateColor) : C(cfg.enemyColor);
-
-            if (cfg.drawBox)
-                dl->AddRect(ImVec2(bx, by), ImVec2(bx + w, by + h), col, 0.0f, 0, cfg.thickness);
-            if (cfg.drawCorners)
-                DrawCorners(dl, bx, by, w, h, col, cfg.thickness + 0.5f);
-            if (cfg.drawHealth && hp > 0)
-                DrawHealthBar(dl, bx, by, w, h, (float)hp / cfg.healthMax, cfg.healthSide);
-            if (cfg.drawDistance) {
-                char buf[48];
-                sprintf_s(buf, "%.0fm", dist);
-                ImVec2 ts = ImGui::CalcTextSize(buf);
-                dl->AddText(ImVec2(bx + w * 0.5f - ts.x * 0.5f, by + h + 2.0f), IM_COL32(255, 255, 255, 230), buf);
-            }
-            ++g_dbgDrawn;
-            ++g_dbgCount;
         }
     }
 
-    // ============================================================
-    // ONLINE VTable objects (optional, scanned on attach)
-    // ============================================================
-    if (cfg.useOnline && g_vObjectsScanned) {
-        for (uintptr_t obj : g_vObjects) {
-            Vec3 origin{};
-            if (!RPM(obj + Off::V_OBJ_ORIGIN, origin.x)) continue;
-            if (!RPM(obj + Off::V_OBJ_ORIGIN + 4, origin.y)) continue;
-            if (!RPM(obj + Off::V_OBJ_ORIGIN + 8, origin.z)) continue;
-
-            if (fabsf(origin.x) > 20000.0f || fabsf(origin.y) > 20000.0f) continue;
-            if (fabsf(origin.x) < 0.1f && fabsf(origin.y) < 0.1f) continue;
-
-            float dist = 0.0f;
-            if (g_haveLocal) {
-                float dx = origin.x - g_localPos.x;
-                float dy = origin.y - g_localPos.y;
-                float dz = origin.z - g_localPos.z;
-                dist = sqrtf(dx*dx + dy*dy + dz*dz);
-            }
-            if (dist < 50.0f || dist > cfg.maxDistance) continue;
-
-            Vec3 head = origin;
-            head.z += cfg.headOffset;
-
-            Vec2 feet{}, headScr{};
-            if (!WorldToScreen(origin, mat, sw, sh, feet)) continue;
-            if (!WorldToScreen(head, mat, sw, sh, headScr)) continue;
-
-            float h = feet.y - headScr.y;
-            if (h < 4.0f || h > 2000.0f) continue;
-            float w = h * cfg.widthRatio;
-            float bx = headScr.x - w * 0.5f;
-            float by = headScr.y;
-
-            ImU32 col = C(cfg.enemyColor);
-            if (cfg.drawBox)
-                dl->AddRect(ImVec2(bx, by), ImVec2(bx + w, by + h), col, 0.0f, 0, cfg.thickness);
-            if (cfg.drawDistance) {
-                char buf[32];
-                sprintf_s(buf, "ON %.0f", dist);
-                dl->AddText(ImVec2(bx, by - 14), IM_COL32(255, 100, 100, 230), buf);
-            }
-            ++g_dbgDrawn;
-            ++g_dbgCount;
-        }
+    // Run test aimbot toward best target
+    if (hasAimTarget) {
+        // draw small cross on target
+        dl->AddLine(ImVec2(bestAimX - 6, bestAimY), ImVec2(bestAimX + 6, bestAimY), IM_COL32(0, 255, 0, 200), 1.5f);
+        dl->AddLine(ImVec2(bestAimX, bestAimY - 6), ImVec2(bestAimX, bestAimY + 6), IM_COL32(0, 255, 0, 200), 1.5f);
+        RunTestAimbot(bestAimX, bestAimY, sw, sh);
     }
 }
 
