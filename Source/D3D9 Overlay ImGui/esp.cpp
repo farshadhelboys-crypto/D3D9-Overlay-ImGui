@@ -1,6 +1,6 @@
 // =====================================================================
 //  ESP - Integrated with UI / Drawing framework (EN / FA bilingual)
-//  Updated with verified offsets discovered 2026-10-23
+//  Updated with WORKING offsets from verified Python ESP (2026-10-24)
 // =====================================================================
 #include <Windows.h>
 #include <TlHelp32.h>
@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cfloat>
+#include <vector>
 #include "ImGui/imgui.h"
 #include "UI.h"
 #include "esp.h"
@@ -49,7 +50,6 @@ static const Loc L_Health       = { "Health Bar",               "Health Bar" };
 static const Loc L_MaxHP        = { "Max HP",                   "Max HP" };
 static const Loc L_Side         = { "Side",                     "Side" };
 static const Loc L_MatrixEntity = { "Advanced",                 "Advanced" };
-static const Loc L_MatrixSrc    = { "Camera Mode",              "Camera Mode" };
 static const Loc L_Colors       = { "Colors",                   "Colors" };
 static const Loc L_Enemy        = { "Enemy",                    "Enemy" };
 static const Loc L_Mate         = { "Mate",                     "Mate" };
@@ -61,49 +61,40 @@ static const Loc L_OpenTG       = { "Open Telegram",            "Open Telegram" 
 static const Loc L_CopyTG       = { "Copy @client_v34",         "Copy @client_v34" };
 
 // ============================================================
-// VERIFIED OFFSETS (Discovered by Farshad via Cheat Engine)
-// Date: 2026-10-23
+// WORKING OFFSETS (from verified Python ESP - 2026-10-24)
 // ============================================================
 namespace Off {
-    // Self Position: [clientmod_game.dll + 0x00E1F664] -> Ptr -> X/Y/Z (float)
-    constexpr uintptr_t MY_POS_PTR_RVA   = 0x00E1F664;
+    // Local player direct floats (module relative)
+    constexpr uintptr_t MY_POS_X     = 0x242F510;
+    constexpr uintptr_t MY_POS_Y     = 0x242F514;
+    constexpr uintptr_t MY_POS_Z     = 0x242F518;
+    constexpr uintptr_t MY_YAW       = 0x25982CC;
+    constexpr uintptr_t MY_PITCH     = 0x25982D0;
 
-    // Self Team: [clientmod_game.dll + 0x02E1616C] -> Ptr + 0x1D8 (Int32)
-    // 2 = Terrorist, 3 = CT
-    constexpr uintptr_t MY_TEAM_PTR_RVA  = 0x02E1616C;
-    constexpr uintptr_t MY_TEAM_OFFSET   = 0x1D8;
+    // View Matrix (module relative) - verified working
+    constexpr uintptr_t MATRIX_RVA   = 0x27603D0;
 
-    // HP chain: [clientmod_game.dll + 0x029BD00C] -> Ptr1 + 0x38 -> Ptr2 + 0x48
-    constexpr uintptr_t HP_PTR_RVA       = 0x029BD00C;
-    constexpr uintptr_t HP_OFFSET1       = 0x38;
-    constexpr uintptr_t HP_OFFSET2       = 0x48;
+    // Offline Entity Array (V8 style)
+    constexpr uintptr_t PLAYER_ARRAY_RVA = 0x26B2364;
+    constexpr uintptr_t ARR_STRIDE       = 0x14;
+    constexpr uintptr_t ARR_OBJ_OFF      = 0x0C;
+    constexpr uintptr_t OBJ_POS_OFF      = 0x290;
+    constexpr uintptr_t OBJ_HP_OFF       = 0x11C;
+    constexpr uintptr_t OBJ_TEAM_OFF     = 0xD4;
 
-    // Entity list (still experimental / unverified)
-    constexpr uintptr_t ENTITY_LIST_RVA  = 0x25B9390;
-    constexpr uintptr_t ENTITY_BIAS_RVA  = 0x25B8FA0;
-    constexpr uintptr_t PLAYER_STRIDE    = 0x400;
+    // Online VTable signatures (module relative)
+    constexpr uintptr_t VTABLE_1     = 0x01DDAC3C;
+    constexpr uintptr_t VTABLE_2     = 0x01DDA9C8;
+    constexpr uintptr_t V_OBJ_ORIGIN = 0x538;
 
-    // Old entity fields (kept for experimental entity loop)
-    constexpr uintptr_t OBJ_HP           = 0x11C;
-    constexpr uintptr_t OBJ_TEAM         = 0x1FC;
-    constexpr uintptr_t OBJ_ORIGIN       = 0x538;
+    // Optional resource table
+    constexpr uintptr_t PLAYER_RES_RVA = 0x2478218;
+    constexpr uintptr_t RES_HP         = 0x1270;
+    constexpr uintptr_t RES_TEAM       = 0x1128;
 }
-
-// Absolute heap matrix candidates (change every game restart)
-static const uintptr_t MATRIX_CANDIDATES[] = {
-    0x2BE62A70,
-    0x2BE62AC0,
-    0x25474A30,
-    0x317FDDF0,
-    0x317FDE00,
-    0x257B2C8,   // old module-relative fallback (will be + base later if needed)
-    0xFC7B00
-};
-static const int MATRIX_CANDIDATE_COUNT = sizeof(MATRIX_CANDIDATES) / sizeof(MATRIX_CANDIDATES[0]);
 
 struct Vec3 { float x, y, z; };
 struct Vec2 { float x, y; };
-struct Mat4 { float m[16]; };  // row-major flat for easy W2S
 
 struct EspConfig {
     bool  enabled       = true;
@@ -112,13 +103,13 @@ struct EspConfig {
     bool  drawCorners   = false;
     bool  drawHealth    = true;
     bool  drawDistance  = true;
-    bool  drawLocal     = true;   // default ON so user can verify W2S
-    bool  tryEntityLoop = false;  // experimental, off by default
-    int   matrixChoice  = 0;      // 0 = Auto-scan
+    bool  drawLocal     = true;
+    bool  useOffline    = true;   // V8 array
+    bool  useOnline     = false;  // VTable objects (heavier)
     float headOffset    = 72.0f;
     float widthRatio    = 0.45f;
-    float thickness     = 1.6f;
-    float maxDistance   = 800.0f;
+    float thickness     = 1.8f;
+    float maxDistance   = 1500.0f;
     float healthMax     = 100.0f;
     int   healthSide    = 0;
     ImVec4 enemyColor   = ImVec4(1.00f, 0.25f, 0.25f, 1.00f);
@@ -131,15 +122,16 @@ static uintptr_t  g_gameBase    = 0;
 static DWORD      g_attachedPid = 0;
 static HWND       g_lastTarget  = nullptr;
 static int        g_localTeam   = 0;
-static uintptr_t  g_localPtr    = 0;
 static Vec3       g_localPos    = {0, 0, 0};
 static bool       g_haveLocal   = false;
 static char       g_status[160] = "Not attached";
 static int        g_dbgCount    = 0;
 static int        g_dbgDrawn    = 0;
 static bool       g_dbgVmOk     = false;
-static int        g_bestMatrixIdx = -1;
-static float      g_bestMatrixDist = 999999.f;
+
+// Cached online objects (scanned once on attach / re-attach)
+static std::vector<uintptr_t> g_vObjects;
+static bool g_vObjectsScanned = false;
 
 template<typename T>
 static inline bool RPM(uintptr_t addr, T& out) {
@@ -147,7 +139,6 @@ static inline bool RPM(uintptr_t addr, T& out) {
     return ReadProcessMemory(g_hProc, (LPCVOID)addr, &out, sizeof(T), &read) && read == sizeof(T);
 }
 
-// Safe pointer read (game appears to be 32-bit)
 static inline bool ReadPtr(uintptr_t addr, uintptr_t& out) {
     uint32_t tmp = 0;
     if (!RPM(addr, tmp)) return false;
@@ -171,10 +162,46 @@ static uintptr_t GetModuleBase(DWORD pid, const wchar_t* mod) {
 
 static void Detach() {
     if (g_hProc) { CloseHandle(g_hProc); g_hProc = nullptr; }
-    g_gameBase = 0; g_attachedPid = 0; g_localTeam = 0; g_localPtr = 0; g_haveLocal = false;
+    g_gameBase = 0; g_attachedPid = 0; g_localTeam = 0;
+    g_haveLocal = false;
     g_dbgCount = 0; g_dbgDrawn = 0; g_dbgVmOk = false;
-    g_bestMatrixIdx = -1; g_bestMatrixDist = 999999.f;
+    g_vObjects.clear();
+    g_vObjectsScanned = false;
     strcpy_s(g_status, "Not attached");
+}
+
+// Lightweight VTable object scan (only called on attach)
+static void ScanVTableObjects() {
+    g_vObjects.clear();
+    g_vObjectsScanned = false;
+    if (!g_hProc || !g_gameBase) return;
+
+    const uint32_t targets[2] = {
+        (uint32_t)(g_gameBase + Off::VTABLE_1),
+        (uint32_t)(g_gameBase + Off::VTABLE_2)
+    };
+
+    // Scan a reasonable heap range (same idea as Python but limited for speed)
+    // Full 0x10000000-0x40000000 is too slow for realtime; we do a lighter pass.
+    const uintptr_t start = 0x10000000;
+    const uintptr_t end   = 0x30000000;
+    const size_t chunk = 0x100000; // 1 MB
+
+    std::vector<uint8_t> buf(chunk);
+
+    for (uintptr_t addr = start; addr < end; addr += chunk) {
+        SIZE_T bytesRead = 0;
+        if (!ReadProcessMemory(g_hProc, (LPCVOID)addr, buf.data(), chunk, &bytesRead) || bytesRead < 16)
+            continue;
+
+        for (size_t i = 0; i + 4 <= bytesRead; i += 4) {
+            uint32_t val = *reinterpret_cast<uint32_t*>(buf.data() + i);
+            if (val == targets[0] || val == targets[1]) {
+                g_vObjects.push_back(addr + i);
+            }
+        }
+    }
+    g_vObjectsScanned = true;
 }
 
 static bool AttachFromUI() {
@@ -184,120 +211,69 @@ static bool AttachFromUI() {
     DWORD pid = UI::GetTargetPID();
     if (!pid && hwnd) GetWindowThreadProcessId(hwnd, &pid);
     if (!pid) { strcpy_s(g_status, "Target PID invalid"); return false; }
+
     g_hProc = OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, FALSE, pid);
     if (!g_hProc) { strcpy_s(g_status, "OpenProcess failed (run as admin)"); return false; }
+
     g_gameBase = GetModuleBase(pid, L"clientmod_game.dll");
     if (!g_gameBase) {
         strcpy_s(g_status, "clientmod_game.dll not loaded yet");
         CloseHandle(g_hProc); g_hProc = nullptr; return false;
     }
     g_attachedPid = pid;
-    sprintf_s(g_status, "Attached - PID: %lu  Base: 0x%llX", (unsigned long)pid, (unsigned long long)g_gameBase);
+
+    // Optional: scan online objects (can take 1-3 seconds)
+    if (cfg.useOnline) {
+        strcpy_s(g_status, "Scanning VTable objects...");
+        ScanVTableObjects();
+        sprintf_s(g_status, "Attached - PID %lu | VObj %zu", (unsigned long)pid, g_vObjects.size());
+    } else {
+        sprintf_s(g_status, "Attached - PID %lu | Base 0x%llX", (unsigned long)pid, (unsigned long long)g_gameBase);
+    }
     return true;
 }
 
 // -----------------------------------------------------------------
-// Update local player using NEW verified chains
+// Local player (direct floats - verified working)
 // -----------------------------------------------------------------
 static void UpdateLocal() {
-    g_localTeam = 0;
-    g_localPtr  = 0;
     g_haveLocal = false;
+    g_localTeam = 0;
     if (!g_hProc || !g_gameBase) return;
 
-    // 1. Self Position
-    uintptr_t posPtr = 0;
-    if (ReadPtr(g_gameBase + Off::MY_POS_PTR_RVA, posPtr) && posPtr > 0x10000) {
-        Vec3 pos{};
-        if (RPM(posPtr + 0x0, pos.x) && RPM(posPtr + 0x4, pos.y) && RPM(posPtr + 0x8, pos.z)) {
-            g_localPos  = pos;
-            g_localPtr  = posPtr;   // we use the pos pointer as identity for now
+    Vec3 pos{};
+    if (RPM(g_gameBase + Off::MY_POS_X, pos.x) &&
+        RPM(g_gameBase + Off::MY_POS_Y, pos.y) &&
+        RPM(g_gameBase + Off::MY_POS_Z, pos.z)) {
+        if (fabsf(pos.x) > 1.0f || fabsf(pos.y) > 1.0f || fabsf(pos.z) > 1.0f) {
+            g_localPos = pos;
             g_haveLocal = true;
         }
     }
-
-    // 2. Self Team
-    uintptr_t teamBase = 0;
-    if (ReadPtr(g_gameBase + Off::MY_TEAM_PTR_RVA, teamBase) && teamBase > 0x10000) {
-        int team = 0;
-        if (RPM(teamBase + Off::MY_TEAM_OFFSET, team)) {
-            g_localTeam = team;
-        }
-    }
 }
 
 // -----------------------------------------------------------------
-// WorldToScreen (same math as the working Python)
+// WorldToScreen matching the working Python layout
+// mat layout used by the verified script:
+// cx = m[0]*x + m[1]*y + m[2]*z + m[3]
+// cy = m[4]*x + m[5]*y + m[6]*z + m[7]
+// cw = m[12]*x + m[13]*y + m[14]*z + m[15]
 // -----------------------------------------------------------------
 static bool WorldToScreen(const Vec3& pos, const float* mat, float sw, float sh, Vec2& out) {
-    float cx = mat[0] * pos.x + mat[4] * pos.y + mat[8]  * pos.z + mat[12];
-    float cy = mat[1] * pos.x + mat[5] * pos.y + mat[9]  * pos.z + mat[13];
-    float cw = mat[3] * pos.x + mat[7] * pos.y + mat[11] * pos.z + mat[15];
+    float cx = mat[0] * pos.x + mat[1] * pos.y + mat[2] * pos.z + mat[3];
+    float cy = mat[4] * pos.x + mat[5] * pos.y + mat[6] * pos.z + mat[7];
+    float cw = mat[12] * pos.x + mat[13] * pos.y + mat[14] * pos.z + mat[15];
 
     if (fabsf(cw) < 0.001f) return false;
+    if (cw < 0.2f) return false; // behind camera-ish
 
-    out.x = (sw * 0.5f) * (1.0f + cx / cw);
-    out.y = (sh * 0.5f) * (1.0f - cy / cw);
+    float ndc_x = cx / cw;
+    float ndc_y = cy / cw;
+
+    // Standard conversion (more stable than the Python variant)
+    out.x = (sw * 0.5f) * (1.0f + ndc_x);
+    out.y = (sh * 0.5f) * (1.0f - ndc_y);
     return true;
-}
-
-static bool IsValidMatrix(const float* m) {
-    // m[15] should be close to 1.0
-    if (fabsf(m[15] - 1.0f) > 0.05f) return false;
-    // translation components should be reasonably large
-    if (fabsf(m[3]) < 5.0f && fabsf(m[7]) < 5.0f && fabsf(m[11]) < 5.0f) return false;
-    // rotation values roughly in [-1.5 .. 1.5]
-    for (int i : {0,1,2, 4,5,6, 8,9,10}) {
-        if (fabsf(m[i]) > 1.6f) return false;
-    }
-    return true;
-}
-
-// Find the best matrix among candidates (same logic as Python)
-static bool FindBestMatrix(float* outMat, float sw, float sh) {
-    g_bestMatrixIdx = -1;
-    g_bestMatrixDist = 999999.f;
-
-    if (!g_haveLocal) return false;
-
-    float bestMat[16] = {};
-    bool  found = false;
-
-    for (int i = 0; i < MATRIX_CANDIDATE_COUNT; ++i) {
-        uintptr_t addr = MATRIX_CANDIDATES[i];
-
-        // If address looks like a small RVA, try module + RVA
-        if (addr < 0x1000000) {
-            addr = g_gameBase + addr;
-        }
-
-        float mat[16] = {};
-        if (!RPM(addr, mat)) continue;
-        if (!IsValidMatrix(mat)) continue;
-
-        Vec2 screen{};
-        if (!WorldToScreen(g_localPos, mat, sw, sh, screen)) continue;
-
-        float dx = screen.x - sw * 0.5f;
-        float dy = screen.y - sh * 0.5f;
-        float dist = sqrtf(dx * dx + dy * dy);
-
-        if (dist < g_bestMatrixDist) {
-            g_bestMatrixDist = dist;
-            g_bestMatrixIdx  = i;
-            memcpy(bestMat, mat, sizeof(bestMat));
-            found = true;
-        }
-    }
-
-    if (found) {
-        memcpy(outMat, bestMat, sizeof(float) * 16);
-        g_dbgVmOk = true;
-        return true;
-    }
-
-    g_dbgVmOk = false;
-    return false;
 }
 
 static inline ImU32 C(ImVec4 v) { return ImGui::ColorConvertFloat4ToU32(v); }
@@ -333,6 +309,7 @@ static void DrawHealthBar(ImDrawList* dl, float bx, float by, float w, float h, 
     }
 }
 
+// ---------- Rotating logo ----------
 static inline ImVec2 RotatePoint(float x, float y, float s, float c) {
     return ImVec2(x * c - y * s, x * s + y * c);
 }
@@ -376,13 +353,16 @@ static void DrawRotatingLogo() {
     ImRotateEnd(dl, angle, ImVec2(posX, posY));
 }
 
+// -----------------------------------------------------------------
+// Menu
+// -----------------------------------------------------------------
 void RenderESPMenu() {
     if (!UI::IsWindowTargeted()) return;
-    ImGui::SetNextWindowSize(ImVec2(380, 820), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(380, 780), ImGuiCond_FirstUseEver);
     ImGui::Begin(L_Title(), nullptr, ImGuiWindowFlags_NoCollapse);
 
     ImGui::TextColored(ImVec4(0.40f, 0.85f, 1.00f, 1.00f), "%s", L_Title());
-    ImGui::SameLine(); ImGui::TextDisabled("v1.1 (CE offsets)");
+    ImGui::SameLine(); ImGui::TextDisabled("v2.0 (Working offsets)");
     ImGui::Separator();
 
     ImGui::Text("%s", L_Language());
@@ -409,24 +389,18 @@ void RenderESPMenu() {
         ImGui::Checkbox(L_HealthBar(), &cfg.drawHealth); ImGui::SameLine();
         ImGui::Checkbox(L_Distance(), &cfg.drawDistance);
         ImGui::Checkbox(L_DrawLocal(), &cfg.drawLocal);
-        ImGui::Checkbox("Try Entity Loop (experimental)", &cfg.tryEntityLoop);
+        ImGui::Checkbox("Offline Array (V8)", &cfg.useOffline);
+        ImGui::Checkbox("Online VTable (slow scan)", &cfg.useOnline);
     }
     if (ImGui::CollapsingHeader(L_BoxTuning(), ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::SliderFloat(L_Thickness(), &cfg.thickness, 0.5f, 5.0f, "%.1f");
-        ImGui::SliderFloat(L_HeadOffset(), &cfg.headOffset, 50.0f, 110.0f, "%.0f");
+        ImGui::SliderFloat(L_HeadOffset(), &cfg.headOffset, 40.0f, 120.0f, "%.0f");
         ImGui::SliderFloat(L_WidthRatio(), &cfg.widthRatio, 0.2f, 0.8f, "%.2f");
     }
     if (ImGui::CollapsingHeader(L_Health())) {
         ImGui::SliderFloat(L_MaxHP(), &cfg.healthMax, 50.0f, 500.0f, "%.0f");
         ImGui::Combo(L_Side(), &cfg.healthSide, "Left\0Right\0Top\0Bottom\0");
     }
-
-    if (ImGui::CollapsingHeader(L_MatrixEntity(), ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::TextDisabled("Matrix is auto-scanned from CE candidates");
-        ImGui::Text("Best Matrix Idx : %d", g_bestMatrixIdx);
-        ImGui::Text("Dist to center  : %.1f", g_bestMatrixDist);
-    }
-
     if (ImGui::CollapsingHeader(L_Colors())) {
         ImGui::ColorEdit4(L_Enemy(), (float*)&cfg.enemyColor);
         ImGui::ColorEdit4(L_Mate(), (float*)&cfg.mateColor);
@@ -437,10 +411,10 @@ void RenderESPMenu() {
         ImGui::Text("Base        : 0x%llX", (unsigned long long)g_gameBase);
         ImGui::Text("Have Local  : %s", g_haveLocal ? "YES" : "NO");
         ImGui::Text("Local Pos   : %.1f  %.1f  %.1f", g_localPos.x, g_localPos.y, g_localPos.z);
-        ImGui::Text("Local Team  : %d", g_localTeam);
         ImGui::Text("Matrix OK   : %s", g_dbgVmOk ? "yes" : "no");
         ImGui::Text("Entities    : %d", g_dbgCount);
         ImGui::Text("Drawn       : %d", g_dbgDrawn);
+        ImGui::Text("VTable objs : %zu", g_vObjects.size());
     }
 
     ImGui::Separator();
@@ -467,6 +441,9 @@ void RenderESPMenu() {
     ImGui::End();
 }
 
+// -----------------------------------------------------------------
+// Main draw
+// -----------------------------------------------------------------
 void RenderESPBoxes() {
     if (UI::IsWindowTargeted()) DrawRotatingLogo();
 
@@ -486,99 +463,136 @@ void RenderESPBoxes() {
     ImDrawList* dl = ImGui::GetBackgroundDrawList();
     if (!dl) return;
 
-    // ---------- Find best View Matrix ----------
-    float vm[16] = {};
-    if (!FindBestMatrix(vm, sw, sh)) {
-        // Still draw status text so user knows something is happening
-        dl->AddText(ImVec2(20, 70), IM_COL32(255, 80, 80, 255), "Matrix not found - move camera / restart game");
+    // ---- Read View Matrix (direct RVA that works in Python) ----
+    float mat[16] = {};
+    g_dbgVmOk = RPM(g_gameBase + Off::MATRIX_RVA, mat);
+    if (!g_dbgVmOk) {
+        dl->AddText(ImVec2(20, 70), IM_COL32(255, 80, 80, 255), "Matrix read failed");
         return;
     }
 
     g_dbgDrawn = 0;
+    g_dbgCount = 0;
 
-    // ---------- Draw Local Player (always useful for verification) ----------
+    // ---- Draw Local Player marker ----
     if (g_haveLocal && cfg.drawLocal) {
         Vec2 screen{};
-        if (WorldToScreen(g_localPos, vm, sw, sh, screen)) {
-            // Green filled circle + label (same as Python proof)
-            dl->AddCircleFilled(ImVec2(screen.x, screen.y), 6.0f, IM_COL32(50, 255, 50, 220), 16);
-            dl->AddCircle(ImVec2(screen.x, screen.y), 8.0f, IM_COL32(0, 0, 0, 200), 16, 2.0f);
-            dl->AddText(ImVec2(screen.x + 12, screen.y - 8), IM_COL32(50, 255, 50, 255), "YOU");
-
-            // Optional small box around local
-            if (cfg.drawBox) {
-                Vec3 head = g_localPos;
-                head.z += cfg.headOffset;
-                Vec2 headScr{};
-                if (WorldToScreen(head, vm, sw, sh, headScr)) {
-                    float h = screen.y - headScr.y;
-                    if (h > 5.0f && h < 800.0f) {
-                        float w = h * cfg.widthRatio;
-                        float bx = headScr.x - w * 0.5f;
-                        float by = headScr.y;
-                        dl->AddRect(ImVec2(bx, by), ImVec2(bx + w, by + h), C(cfg.localColor), 0.0f, 0, cfg.thickness);
-                    }
-                }
-            }
+        if (WorldToScreen(g_localPos, mat, sw, sh, screen)) {
+            dl->AddCircleFilled(ImVec2(screen.x, screen.y), 5.0f, IM_COL32(50, 255, 50, 220), 12);
+            dl->AddCircle(ImVec2(screen.x, screen.y), 7.0f, IM_COL32(0, 0, 0, 200), 12, 2.0f);
+            dl->AddText(ImVec2(screen.x + 10, screen.y - 8), IM_COL32(50, 255, 50, 255), "YOU");
             ++g_dbgDrawn;
         }
     }
 
-    // ---------- Experimental Entity Loop (still unreliable) ----------
-    if (cfg.tryEntityLoop) {
-        uintptr_t listBase = 0;
-        if (ReadPtr(g_gameBase + Off::ENTITY_LIST_RVA, listBase) && listBase > 0x10000) {
-            // try a reasonable number of slots
-            const int MAX_ENT = 64;
-            g_dbgCount = 0;
+    // ============================================================
+    // OFFLINE ARRAY (V8 style) - main reliable path
+    // ============================================================
+    if (cfg.useOffline) {
+        for (int i = 0; i < 64; ++i) {
+            uintptr_t slot = g_gameBase + Off::PLAYER_ARRAY_RVA + (uintptr_t)i * Off::ARR_STRIDE;
+            uintptr_t obj = 0;
+            if (!ReadPtr(slot + Off::ARR_OBJ_OFF, obj) || obj < 0x10000) continue;
 
-            for (int i = 0; i < MAX_ENT; ++i) {
-                uintptr_t ent = listBase + (uintptr_t)i * Off::PLAYER_STRIDE;
+            Vec3 origin{};
+            if (!RPM(obj + Off::OBJ_POS_OFF, origin.x)) continue;
+            if (!RPM(obj + Off::OBJ_POS_OFF + 4, origin.y)) continue;
+            if (!RPM(obj + Off::OBJ_POS_OFF + 8, origin.z)) continue;
 
-                int hp = 0, team = 0;
-                Vec3 origin{};
-                if (!RPM(ent + Off::OBJ_HP, hp)) continue;
-                if (!RPM(ent + Off::OBJ_TEAM, team)) continue;
-                if (!RPM(ent + Off::OBJ_ORIGIN, origin)) continue;
+            if (fabsf(origin.x) < 1.0f || fabsf(origin.x) > 20000.0f) continue;
 
-                if (hp <= 0 || hp > 1000) continue;
-                if (origin.x == 0.f && origin.y == 0.f && origin.z == 0.f) continue;
+            int hp = 0, team = 0;
+            RPM(obj + Off::OBJ_HP_OFF, hp);
+            RPM(obj + Off::OBJ_TEAM_OFF, team);
 
-                // skip local roughly
+            float dist = 0.0f;
+            if (g_haveLocal) {
                 float dx = origin.x - g_localPos.x;
                 float dy = origin.y - g_localPos.y;
                 float dz = origin.z - g_localPos.z;
-                float dist = sqrtf(dx*dx + dy*dy + dz*dz);
-                if (dist < 5.0f) continue; // probably ourselves
-
-                if (cfg.teamCheck && g_localTeam != 0 && team == g_localTeam) continue;
-                if (cfg.maxDistance > 0.f && dist > cfg.maxDistance) continue;
-
-                Vec3 head = origin; head.z += cfg.headOffset;
-                Vec2 feet{}, headScr{};
-                if (!WorldToScreen(origin, vm, sw, sh, feet)) continue;
-                if (!WorldToScreen(head, vm, sw, sh, headScr)) continue;
-
-                float h = feet.y - headScr.y;
-                if (h < 4.0f || h > 2000.0f) continue;
-                float w = h * cfg.widthRatio;
-                float bx = headScr.x - w * 0.5f;
-                float by = headScr.y;
-
-                ImU32 col = (g_localTeam != 0 && team == g_localTeam) ? C(cfg.mateColor) : C(cfg.enemyColor);
-
-                if (cfg.drawBox)     dl->AddRect(ImVec2(bx, by), ImVec2(bx + w, by + h), col, 0.0f, 0, cfg.thickness);
-                if (cfg.drawCorners) DrawCorners(dl, bx, by, w, h, col, cfg.thickness + 0.5f);
-                if (cfg.drawHealth)  DrawHealthBar(dl, bx, by, w, h, (float)hp / cfg.healthMax, cfg.healthSide);
-                if (cfg.drawDistance) {
-                    char buf[48];
-                    sprintf_s(buf, "%.0f", dist);
-                    ImVec2 ts = ImGui::CalcTextSize(buf);
-                    dl->AddText(ImVec2(bx + w * 0.5f - ts.x * 0.5f, by + h + 2.0f), IM_COL32(255, 255, 255, 230), buf);
-                }
-                ++g_dbgDrawn;
-                ++g_dbgCount;
+                dist = sqrtf(dx*dx + dy*dy + dz*dz);
             }
+            if (dist < 3.0f || dist > cfg.maxDistance) continue;
+
+            if (cfg.teamCheck && g_localTeam != 0 && team == g_localTeam) continue;
+
+            Vec3 head = origin;
+            head.z += cfg.headOffset;
+
+            Vec2 feet{}, headScr{};
+            if (!WorldToScreen(origin, mat, sw, sh, feet)) continue;
+            if (!WorldToScreen(head, mat, sw, sh, headScr)) continue;
+
+            float h = feet.y - headScr.y;
+            if (h < 4.0f || h > 2000.0f) continue;
+            float w = h * cfg.widthRatio;
+            float bx = headScr.x - w * 0.5f;
+            float by = headScr.y;
+
+            ImU32 col = (g_localTeam != 0 && team == g_localTeam) ? C(cfg.mateColor) : C(cfg.enemyColor);
+
+            if (cfg.drawBox)
+                dl->AddRect(ImVec2(bx, by), ImVec2(bx + w, by + h), col, 0.0f, 0, cfg.thickness);
+            if (cfg.drawCorners)
+                DrawCorners(dl, bx, by, w, h, col, cfg.thickness + 0.5f);
+            if (cfg.drawHealth && hp > 0)
+                DrawHealthBar(dl, bx, by, w, h, (float)hp / cfg.healthMax, cfg.healthSide);
+            if (cfg.drawDistance) {
+                char buf[48];
+                sprintf_s(buf, "%.0fm", dist);
+                ImVec2 ts = ImGui::CalcTextSize(buf);
+                dl->AddText(ImVec2(bx + w * 0.5f - ts.x * 0.5f, by + h + 2.0f), IM_COL32(255, 255, 255, 230), buf);
+            }
+            ++g_dbgDrawn;
+            ++g_dbgCount;
+        }
+    }
+
+    // ============================================================
+    // ONLINE VTable objects (optional, scanned on attach)
+    // ============================================================
+    if (cfg.useOnline && g_vObjectsScanned) {
+        for (uintptr_t obj : g_vObjects) {
+            Vec3 origin{};
+            if (!RPM(obj + Off::V_OBJ_ORIGIN, origin.x)) continue;
+            if (!RPM(obj + Off::V_OBJ_ORIGIN + 4, origin.y)) continue;
+            if (!RPM(obj + Off::V_OBJ_ORIGIN + 8, origin.z)) continue;
+
+            if (fabsf(origin.x) > 20000.0f || fabsf(origin.y) > 20000.0f) continue;
+            if (fabsf(origin.x) < 0.1f && fabsf(origin.y) < 0.1f) continue;
+
+            float dist = 0.0f;
+            if (g_haveLocal) {
+                float dx = origin.x - g_localPos.x;
+                float dy = origin.y - g_localPos.y;
+                float dz = origin.z - g_localPos.z;
+                dist = sqrtf(dx*dx + dy*dy + dz*dz);
+            }
+            if (dist < 50.0f || dist > cfg.maxDistance) continue;
+
+            Vec3 head = origin;
+            head.z += cfg.headOffset;
+
+            Vec2 feet{}, headScr{};
+            if (!WorldToScreen(origin, mat, sw, sh, feet)) continue;
+            if (!WorldToScreen(head, mat, sw, sh, headScr)) continue;
+
+            float h = feet.y - headScr.y;
+            if (h < 4.0f || h > 2000.0f) continue;
+            float w = h * cfg.widthRatio;
+            float bx = headScr.x - w * 0.5f;
+            float by = headScr.y;
+
+            ImU32 col = C(cfg.enemyColor);
+            if (cfg.drawBox)
+                dl->AddRect(ImVec2(bx, by), ImVec2(bx + w, by + h), col, 0.0f, 0, cfg.thickness);
+            if (cfg.drawDistance) {
+                char buf[32];
+                sprintf_s(buf, "ON %.0f", dist);
+                dl->AddText(ImVec2(bx, by - 14), IM_COL32(255, 100, 100, 230), buf);
+            }
+            ++g_dbgDrawn;
+            ++g_dbgCount;
         }
     }
 }
