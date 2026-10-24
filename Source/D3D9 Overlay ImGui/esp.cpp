@@ -1,5 +1,5 @@
 // =====================================================================
-//  ESP - VTable only + anti-blink + test aimbot
+//  ESP - VTable only + anti-blink + test aimbot + tabbed UI
 //  (EN / FA bilingual)  - 2026-10-25
 // =====================================================================
 #include <Windows.h>
@@ -34,50 +34,42 @@ static const Loc L_Title        = { "farshad pm Esp",           "farshad pm Esp"
 static const Loc L_Language     = { "Language",                 "Language" };
 static const Loc L_EnableESP    = { "Enable ESP",               "Enable ESP" };
 static const Loc L_Reattach     = { "Re-attach / Rescan",       "Re-attach / Rescan" };
-static const Loc L_Filters      = { "Filters",                  "Filters" };
 static const Loc L_TeamCheck    = { "Team Check",               "Team Check" };
 static const Loc L_MaxDist      = { "Max Distance",             "Max Distance" };
-static const Loc L_Visuals      = { "Visuals",                  "Visuals" };
 static const Loc L_Box          = { "Box",                      "Box" };
 static const Loc L_Corners      = { "Corners",                  "Corners" };
 static const Loc L_HealthBar    = { "Health Bar",               "Health Bar" };
 static const Loc L_Distance     = { "Distance",                 "Distance" };
-static const Loc L_BoxTuning    = { "Box Tuning",               "Box Tuning" };
 static const Loc L_Thickness    = { "Thickness",                "Thickness" };
 static const Loc L_HeadOffset   = { "Head Offset",              "Head Offset" };
 static const Loc L_WidthRatio   = { "Width Ratio",              "Width Ratio" };
-static const Loc L_Health       = { "Health Bar",               "Health Bar" };
 static const Loc L_MaxHP        = { "Max HP",                   "Max HP" };
 static const Loc L_Side         = { "Side",                     "Side" };
-static const Loc L_Aimbot       = { "Test Aimbot",              "Test Aimbot" };
 static const Loc L_AimEnable    = { "Enable Aimbot (test)",     "Enable Aimbot (test)" };
 static const Loc L_AimSmooth    = { "Smooth",                   "Smooth" };
 static const Loc L_AimFov       = { "FOV (px)",                 "FOV (px)" };
-static const Loc L_Colors       = { "Colors",                   "Colors" };
 static const Loc L_Enemy        = { "Enemy",                    "Enemy" };
 static const Loc L_Mate         = { "Mate",                     "Mate" };
-static const Loc L_Debug        = { "Debug",                    "Debug" };
-static const Loc L_Contact      = { "Contact",                  "Contact" };
 static const Loc L_Telegram     = { "Telegram:",                "Telegram:" };
 static const Loc L_OpenTG       = { "Open Telegram",            "Open Telegram" };
 static const Loc L_CopyTG       = { "Copy @client_v34",         "Copy @client_v34" };
 
-// ============================================================
-// WORKING OFFSETS (VTable path - works offline + online)
-// ============================================================
+// Tabs
+static const Loc L_TabMain      = { "Main",                     "اصلی" };
+static const Loc L_TabVisuals   = { "Visuals",                  "نمایش" };
+static const Loc L_TabAimbot    = { "Aimbot",                   "ایم‌بات" };
+static const Loc L_TabColors    = { "Colors",                   "رنگ‌ها" };
+static const Loc L_TabDebug     = { "Debug",                    "دیباگ" };
+static const Loc L_TabContact   = { "Contact",                  "ارتباط" };
+
 namespace Off {
     constexpr uintptr_t MY_POS_X     = 0x242F510;
     constexpr uintptr_t MY_POS_Y     = 0x242F514;
     constexpr uintptr_t MY_POS_Z     = 0x242F518;
-
     constexpr uintptr_t MATRIX_RVA   = 0x27603D0;
-
-    // VTable signatures (module relative)
     constexpr uintptr_t VTABLE_1     = 0x01DDAC3C;
     constexpr uintptr_t VTABLE_2     = 0x01DDA9C8;
     constexpr uintptr_t V_OBJ_ORIGIN = 0x538;
-
-    // Optional (if readable on object)
     constexpr uintptr_t OBJ_HP_OFF   = 0x11C;
     constexpr uintptr_t OBJ_TEAM_OFF = 0xD4;
 }
@@ -90,7 +82,7 @@ struct TrackedEntity {
     Vec3      pos = {0,0,0};
     int       hp = 0;
     int       team = 0;
-    int       life = 0;          // frames left if read fails (anti-blink)
+    int       life = 0;
     bool      valid = false;
 };
 
@@ -125,11 +117,10 @@ static int        g_dbgCount    = 0;
 static int        g_dbgDrawn    = 0;
 static bool       g_dbgVmOk     = false;
 
-static std::vector<uintptr_t>     g_rawObjects;   // scanned once
-static std::vector<TrackedEntity> g_tracked;      // persistent for anti-blink
+static std::vector<uintptr_t>     g_rawObjects;
+static std::vector<TrackedEntity> g_tracked;
 static bool g_scanned = false;
-
-static const int kMaxLife = 8;   // keep drawing for N frames if one read fails
+static const int kMaxLife = 8;
 
 template<typename T>
 static inline bool RPM(uintptr_t addr, T& out) {
@@ -162,7 +153,6 @@ static void Detach() {
     strcpy_s(g_status, "Not attached");
 }
 
-// Scan VTable objects once (same idea as working Python)
 static void ScanVTableObjects() {
     g_rawObjects.clear();
     g_tracked.clear();
@@ -174,36 +164,28 @@ static void ScanVTableObjects() {
         (uint32_t)(g_gameBase + Off::VTABLE_2)
     };
 
-    // Same range style as Python, chunked for speed
     const uintptr_t start = 0x10000000;
     const uintptr_t end   = 0x40000000;
     const size_t chunk = 0x100000;
-
     std::vector<uint8_t> buf(chunk);
 
     for (uintptr_t addr = start; addr < end; addr += chunk) {
         SIZE_T bytesRead = 0;
         if (!ReadProcessMemory(g_hProc, (LPCVOID)addr, buf.data(), chunk, &bytesRead) || bytesRead < 16)
             continue;
-
         for (size_t i = 0; i + 4 <= bytesRead; i += 4) {
             uint32_t val = *reinterpret_cast<uint32_t*>(buf.data() + i);
-            if (val == targets[0] || val == targets[1]) {
+            if (val == targets[0] || val == targets[1])
                 g_rawObjects.push_back(addr + i);
-            }
         }
     }
 
-    // Init tracked list
     g_tracked.reserve(g_rawObjects.size());
     for (uintptr_t o : g_rawObjects) {
         TrackedEntity te;
         te.obj = o;
-        te.life = 0;
-        te.valid = false;
         g_tracked.push_back(te);
     }
-
     g_scanned = true;
     sprintf_s(g_status, "Attached | VTable objects: %zu", g_rawObjects.size());
 }
@@ -225,7 +207,6 @@ static bool AttachFromUI() {
         CloseHandle(g_hProc); g_hProc = nullptr; return false;
     }
     g_attachedPid = pid;
-
     strcpy_s(g_status, "Scanning VTable objects (wait)...");
     ScanVTableObjects();
     return true;
@@ -245,18 +226,13 @@ static void UpdateLocal() {
     }
 }
 
-// W2S matching working Python matrix layout
 static bool WorldToScreen(const Vec3& pos, const float* mat, float sw, float sh, Vec2& out) {
     float cx = mat[0] * pos.x + mat[1] * pos.y + mat[2] * pos.z + mat[3];
     float cy = mat[4] * pos.x + mat[5] * pos.y + mat[6] * pos.z + mat[7];
     float cw = mat[12] * pos.x + mat[13] * pos.y + mat[14] * pos.z + mat[15];
-
-    if (fabsf(cw) < 0.001f) return false;
-    if (cw < 0.15f) return false;
-
+    if (fabsf(cw) < 0.001f || cw < 0.15f) return false;
     float ndc_x = cx / cw;
     float ndc_y = cy / cw;
-
     out.x = (sw * 0.5f) * (1.0f + ndc_x);
     out.y = (sh * 0.5f) * (1.0f - ndc_y);
     return true;
@@ -295,7 +271,6 @@ static void DrawHealthBar(ImDrawList* dl, float bx, float by, float w, float h, 
     }
 }
 
-// ---------- Rotating logo ----------
 static inline ImVec2 RotatePoint(float x, float y, float s, float c) {
     return ImVec2(x * c - y * s, x * s + y * c);
 }
@@ -338,41 +313,46 @@ static void DrawRotatingLogo() {
     ImRotateEnd(dl, angle, ImVec2(posX, posY));
 }
 
-// Simple external aimbot: move mouse toward closest box center inside FOV
 static void RunTestAimbot(float targetX, float targetY, float sw, float sh) {
     if (!cfg.aimbot) return;
-
-    float cx = sw * 0.5f;
-    float cy = sh * 0.5f;
-    float dx = targetX - cx;
-    float dy = targetY - cy;
+    float cx = sw * 0.5f, cy = sh * 0.5f;
+    float dx = targetX - cx, dy = targetY - cy;
     float dist = sqrtf(dx*dx + dy*dy);
     if (dist < 2.0f || dist > cfg.aimFov) return;
-
     float smooth = cfg.aimSmooth < 1.0f ? 1.0f : cfg.aimSmooth;
     int mx = (int)(dx / smooth);
     int my = (int)(dy / smooth);
-
-    if (mx != 0 || my != 0) {
+    if (mx != 0 || my != 0)
         mouse_event(MOUSEEVENTF_MOVE, mx, my, 0, 0);
-    }
 }
 
+// ===================== TABBED MENU =====================
 void RenderESPMenu() {
     if (!UI::IsWindowTargeted()) return;
-    ImGui::SetNextWindowSize(ImVec2(380, 720), ImGuiCond_FirstUseEver);
-    ImGui::Begin(L_Title(), nullptr, ImGuiWindowFlags_NoCollapse);
 
+    // Compact window with forced scrollbar so scroll always works
+    ImGui::SetNextWindowSize(ImVec2(360, 420), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(320, 280), ImVec2(500, 700));
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysVerticalScrollbar;
+    if (!ImGui::Begin(L_Title(), nullptr, flags))
+    {
+        ImGui::End();
+        return;
+    }
+
+    // Header
     ImGui::TextColored(ImVec4(0.40f, 0.85f, 1.00f, 1.00f), "%s", L_Title());
-    ImGui::SameLine(); ImGui::TextDisabled("v2.1 VTable");
+    ImGui::SameLine();
+    ImGui::TextDisabled("v2.2");
     ImGui::Separator();
 
+    // Language + Enable + Reattach (always visible)
     ImGui::Text("%s", L_Language());
     ImGui::SameLine();
-    if (ImGui::RadioButton("English", g_lang == Lang::EN)) g_lang = Lang::EN;
+    if (ImGui::RadioButton("EN", g_lang == Lang::EN)) g_lang = Lang::EN;
     ImGui::SameLine();
-    if (ImGui::RadioButton("Farsi", g_lang == Lang::FA)) g_lang = Lang::FA;
-    ImGui::Separator();
+    if (ImGui::RadioButton("FA", g_lang == Lang::FA)) g_lang = Lang::FA;
 
     ImGui::Checkbox(L_EnableESP(), &cfg.enabled);
     ImGui::SameLine();
@@ -380,63 +360,97 @@ void RenderESPMenu() {
     ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "%s", g_status);
     ImGui::Separator();
 
-    if (ImGui::CollapsingHeader(L_Filters(), ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Checkbox(L_TeamCheck(), &cfg.teamCheck);
-        ImGui::SliderFloat(L_MaxDist(), &cfg.maxDistance, 50.0f, 4000.0f, "%.0f");
-    }
-    if (ImGui::CollapsingHeader(L_Visuals(), ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Checkbox(L_Box(), &cfg.drawBox); ImGui::SameLine();
-        ImGui::Checkbox(L_Corners(), &cfg.drawCorners);
-        ImGui::Checkbox(L_HealthBar(), &cfg.drawHealth); ImGui::SameLine();
-        ImGui::Checkbox(L_Distance(), &cfg.drawDistance);
-    }
-    if (ImGui::CollapsingHeader(L_BoxTuning(), ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::SliderFloat(L_Thickness(), &cfg.thickness, 0.5f, 5.0f, "%.1f");
-        ImGui::SliderFloat(L_HeadOffset(), &cfg.headOffset, 40.0f, 120.0f, "%.0f");
-        ImGui::SliderFloat(L_WidthRatio(), &cfg.widthRatio, 0.2f, 0.8f, "%.2f");
-    }
-    if (ImGui::CollapsingHeader(L_Aimbot(), ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Checkbox(L_AimEnable(), &cfg.aimbot);
-        ImGui::SliderFloat(L_AimSmooth(), &cfg.aimSmooth, 1.0f, 20.0f, "%.1f");
-        ImGui::SliderFloat(L_AimFov(), &cfg.aimFov, 30.0f, 500.0f, "%.0f");
-        ImGui::TextDisabled("Aims at closest box center inside FOV");
-    }
-    if (ImGui::CollapsingHeader(L_Colors())) {
-        ImGui::ColorEdit4(L_Enemy(), (float*)&cfg.enemyColor);
-        ImGui::ColorEdit4(L_Mate(), (float*)&cfg.mateColor);
-    }
-    if (ImGui::CollapsingHeader(L_Debug(), ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Text("PID         : %lu", (unsigned long)g_attachedPid);
-        ImGui::Text("Base        : 0x%llX", (unsigned long long)g_gameBase);
-        ImGui::Text("Have Local  : %s", g_haveLocal ? "YES" : "NO");
-        ImGui::Text("Local Pos   : %.1f %.1f %.1f", g_localPos.x, g_localPos.y, g_localPos.z);
-        ImGui::Text("Matrix OK   : %s", g_dbgVmOk ? "yes" : "no");
-        ImGui::Text("Raw VObjs   : %zu", g_rawObjects.size());
-        ImGui::Text("Tracked     : %d", g_dbgCount);
-        ImGui::Text("Drawn       : %d", g_dbgDrawn);
+    // ===== TABS =====
+    if (ImGui::BeginTabBar("EspTabs", ImGuiTabBarFlags_FittingPolicyScroll | ImGuiTabBarFlags_Reorderable))
+    {
+        // --- Main ---
+        if (ImGui::BeginTabItem(L_TabMain()))
+        {
+            ImGui::Checkbox(L_TeamCheck(), &cfg.teamCheck);
+            ImGui::SliderFloat(L_MaxDist(), &cfg.maxDistance, 50.0f, 4000.0f, "%.0f");
+            ImGui::EndTabItem();
+        }
+
+        // --- Visuals ---
+        if (ImGui::BeginTabItem(L_TabVisuals()))
+        {
+            ImGui::Checkbox(L_Box(), &cfg.drawBox);
+            ImGui::SameLine();
+            ImGui::Checkbox(L_Corners(), &cfg.drawCorners);
+            ImGui::Checkbox(L_HealthBar(), &cfg.drawHealth);
+            ImGui::SameLine();
+            ImGui::Checkbox(L_Distance(), &cfg.drawDistance);
+
+            ImGui::Separator();
+            ImGui::SliderFloat(L_Thickness(), &cfg.thickness, 0.5f, 5.0f, "%.1f");
+            ImGui::SliderFloat(L_HeadOffset(), &cfg.headOffset, 40.0f, 120.0f, "%.0f");
+            ImGui::SliderFloat(L_WidthRatio(), &cfg.widthRatio, 0.2f, 0.8f, "%.2f");
+
+            ImGui::Separator();
+            ImGui::SliderFloat(L_MaxHP(), &cfg.healthMax, 50.0f, 500.0f, "%.0f");
+            ImGui::Combo(L_Side(), &cfg.healthSide, "Left\0Right\0Top\0Bottom\0");
+            ImGui::EndTabItem();
+        }
+
+        // --- Aimbot ---
+        if (ImGui::BeginTabItem(L_TabAimbot()))
+        {
+            ImGui::Checkbox(L_AimEnable(), &cfg.aimbot);
+            ImGui::SliderFloat(L_AimSmooth(), &cfg.aimSmooth, 1.0f, 20.0f, "%.1f");
+            ImGui::SliderFloat(L_AimFov(), &cfg.aimFov, 30.0f, 500.0f, "%.0f");
+            ImGui::TextDisabled("Aims at closest box center inside FOV");
+            ImGui::EndTabItem();
+        }
+
+        // --- Colors ---
+        if (ImGui::BeginTabItem(L_TabColors()))
+        {
+            ImGui::ColorEdit4(L_Enemy(), (float*)&cfg.enemyColor);
+            ImGui::ColorEdit4(L_Mate(), (float*)&cfg.mateColor);
+            ImGui::EndTabItem();
+        }
+
+        // --- Debug ---
+        if (ImGui::BeginTabItem(L_TabDebug()))
+        {
+            ImGui::Text("PID         : %lu", (unsigned long)g_attachedPid);
+            ImGui::Text("Base        : 0x%llX", (unsigned long long)g_gameBase);
+            ImGui::Text("Have Local  : %s", g_haveLocal ? "YES" : "NO");
+            ImGui::Text("Local Pos   : %.1f %.1f %.1f", g_localPos.x, g_localPos.y, g_localPos.z);
+            ImGui::Text("Matrix OK   : %s", g_dbgVmOk ? "yes" : "no");
+            ImGui::Text("Raw VObjs   : %zu", g_rawObjects.size());
+            ImGui::Text("Tracked     : %d", g_dbgCount);
+            ImGui::Text("Drawn       : %d", g_dbgDrawn);
+            ImGui::EndTabItem();
+        }
+
+        // --- Contact ---
+        if (ImGui::BeginTabItem(L_TabContact()))
+        {
+            ImGui::Text("%s", L_Telegram());
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.30f, 0.70f, 1.00f, 1.00f), "@client_v34");
+            if (ImGui::Button(L_OpenTG(), ImVec2(-1, 0)))
+                ShellExecuteA(nullptr, "open", "https://t.me/client_v34", nullptr, nullptr, SW_SHOWNORMAL);
+            if (ImGui::Button(L_CopyTG(), ImVec2(-1, 0))) {
+                if (OpenClipboard(nullptr)) {
+                    EmptyClipboard();
+                    const char* text = "@client_v34";
+                    HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, strlen(text) + 1);
+                    if (hMem) {
+                        memcpy(GlobalLock(hMem), text, strlen(text) + 1);
+                        GlobalUnlock(hMem);
+                        SetClipboardData(CF_TEXT, hMem);
+                    }
+                    CloseClipboard();
+                }
+            }
+            ImGui::EndTabItem();
+        }
+
+        ImGui::EndTabBar();
     }
 
-    ImGui::Separator();
-    if (ImGui::CollapsingHeader(L_Contact(), ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Text("%s", L_Telegram());
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.30f, 0.70f, 1.00f, 1.00f), "@client_v34");
-        if (ImGui::Button(L_OpenTG(), ImVec2(-1, 0)))
-            ShellExecuteA(nullptr, "open", "https://t.me/client_v34", nullptr, nullptr, SW_SHOWNORMAL);
-        if (ImGui::Button(L_CopyTG(), ImVec2(-1, 0))) {
-            if (OpenClipboard(nullptr)) {
-                EmptyClipboard();
-                const char* text = "@client_v34";
-                HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, strlen(text) + 1);
-                if (hMem) {
-                    memcpy(GlobalLock(hMem), text, strlen(text) + 1);
-                    GlobalUnlock(hMem);
-                    SetClipboardData(CF_TEXT, hMem);
-                }
-                CloseClipboard();
-            }
-        }
-    }
     ImGui::End();
 }
 
@@ -460,7 +474,6 @@ void RenderESPBoxes() {
     ImDrawList* dl = ImGui::GetBackgroundDrawList();
     if (!dl) return;
 
-    // Matrix
     float mat[16] = {};
     g_dbgVmOk = RPM(g_gameBase + Off::MATRIX_RVA, mat);
     if (!g_dbgVmOk) {
@@ -471,12 +484,10 @@ void RenderESPBoxes() {
     g_dbgDrawn = 0;
     g_dbgCount = 0;
 
-    // Best aim target this frame
     float bestAimDist = 1e9f;
     float bestAimX = 0, bestAimY = 0;
     bool  hasAimTarget = false;
 
-    // Update tracked entities (anti-blink)
     for (auto& te : g_tracked) {
         Vec3 origin{};
         bool ok = RPM(te.obj + Off::V_OBJ_ORIGIN, origin.x) &&
@@ -484,7 +495,6 @@ void RenderESPBoxes() {
                   RPM(te.obj + Off::V_OBJ_ORIGIN + 8, origin.z);
 
         if (ok) {
-            // basic validity
             if (fabsf(origin.x) > 30000.0f || fabsf(origin.y) > 30000.0f || fabsf(origin.z) > 30000.0f)
                 ok = false;
             if (fabsf(origin.x) < 0.05f && fabsf(origin.y) < 0.05f)
@@ -495,7 +505,6 @@ void RenderESPBoxes() {
             te.pos = origin;
             te.life = kMaxLife;
             te.valid = true;
-
             int hp = 0, team = 0;
             RPM(te.obj + Off::OBJ_HP_OFF, hp);
             RPM(te.obj + Off::OBJ_TEAM_OFF, team);
@@ -508,7 +517,6 @@ void RenderESPBoxes() {
 
         if (!te.valid) continue;
 
-        // distance filter
         float dist = 0.0f;
         if (g_haveLocal) {
             float dx = te.pos.x - g_localPos.x;
@@ -516,7 +524,7 @@ void RenderESPBoxes() {
             float dz = te.pos.z - g_localPos.z;
             dist = sqrtf(dx*dx + dy*dy + dz*dz);
         }
-        if (dist < 40.0f || dist > cfg.maxDistance) continue; // skip very close (usually self)
+        if (dist < 40.0f || dist > cfg.maxDistance) continue;
 
         ++g_dbgCount;
 
@@ -533,7 +541,6 @@ void RenderESPBoxes() {
         float bx = headScr.x - w * 0.5f;
         float by = headScr.y;
 
-        // center of box for aimbot
         float boxCx = bx + w * 0.5f;
         float boxCy = by + h * 0.5f;
 
@@ -554,7 +561,6 @@ void RenderESPBoxes() {
 
         ++g_dbgDrawn;
 
-        // aimbot candidate
         if (cfg.aimbot) {
             float adx = boxCx - sw * 0.5f;
             float ady = boxCy - sh * 0.5f;
@@ -568,9 +574,7 @@ void RenderESPBoxes() {
         }
     }
 
-    // Run test aimbot toward best target
     if (hasAimTarget) {
-        // draw small cross on target
         dl->AddLine(ImVec2(bestAimX - 6, bestAimY), ImVec2(bestAimX + 6, bestAimY), IM_COL32(0, 255, 0, 200), 1.5f);
         dl->AddLine(ImVec2(bestAimX, bestAimY - 6), ImVec2(bestAimX, bestAimY + 6), IM_COL32(0, 255, 0, 200), 1.5f);
         RunTestAimbot(bestAimX, bestAimY, sw, sh);

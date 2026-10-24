@@ -9,12 +9,8 @@ on:
 
 jobs:
   build:
-    name: MSBuild Release (${{ matrix.platform }})
+    name: MSBuild Release x64
     runs-on: windows-2022
-    strategy:
-      fail-fast: false
-      matrix:
-        platform: [x64, Win32]
 
     steps:
       - name: Checkout
@@ -27,11 +23,9 @@ jobs:
         id: sdk
         shell: pwsh
         run: |
-          $arch = if ("${{ matrix.platform }}" -eq "x64") { "x64" } else { "x86" }
-          Write-Host "Searching for d3d9.lib ($arch) / d3d9.h ..."
-
+          Write-Host "Searching for d3d9.lib (x64) / d3d9.h ..."
           $d3d9Lib = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\Lib" -Recurse -Filter d3d9.lib -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match "\\um\\$arch\\" } |
+            Where-Object { $_.FullName -match '\\um\\x64\\' } |
             Sort-Object FullName -Descending |
             Select-Object -First 1 -ExpandProperty FullName
 
@@ -42,12 +36,12 @@ jobs:
 
           if (-not $d3d9Lib) {
             $d3d9Lib = Get-ChildItem "${env:ProgramFiles(x86)}" -Recurse -Filter d3d9.lib -ErrorAction SilentlyContinue |
-              Where-Object { $_.FullName -match $arch } |
+              Where-Object { $_.FullName -match 'x64' } |
               Select-Object -First 1 -ExpandProperty FullName
           }
 
           if (-not $d3d9Lib) {
-            Write-Error "d3d9.lib not found for $arch"
+            Write-Error "d3d9.lib not found"
             exit 1
           }
 
@@ -55,8 +49,6 @@ jobs:
           $sharedInclude = if ($d3d9Hdr) { Join-Path $d3d9Hdr.Directory.Parent.FullName "shared" } else { "" }
 
           Write-Host "d3d9.lib = $d3d9Lib"
-          Write-Host "um include = $umInclude"
-
           "d3d9_lib=$d3d9Lib" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "um_include=$umInclude" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "shared_include=$sharedInclude" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
@@ -85,21 +77,19 @@ jobs:
             "<AdditionalDependencies>$deps</AdditionalDependencies>")
 
           Set-Content -Path $vcx -Value $xml -NoNewline
-          Write-Host "--- deps sample ---"
-          Select-String -Path $vcx -Pattern 'AdditionalDependencies' | Select-Object -First 2
 
-      - name: Build (Release ${{ matrix.platform }})
+      - name: Build (Release x64)
         working-directory: Source
         shell: cmd
         run: |
-          msbuild "D3D9 Overlay ImGui.sln" /m /p:Configuration=Release /p:Platform=${{ matrix.platform }} /p:PlatformToolset=v143 /verbosity:minimal
+          msbuild "D3D9 Overlay ImGui.sln" /m /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /verbosity:minimal
 
       - name: Upload artifact
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: D3D9-Overlay-ImGui-${{ matrix.platform }}-Release
+          name: D3D9-Overlay-ImGui-x64-Release
           path: |
-            Source/**/${{ matrix.platform }}/Release/*.exe
+            Source/**/x64/Release/*.exe
             Source/**/Release/*.exe
           if-no-files-found: warn
