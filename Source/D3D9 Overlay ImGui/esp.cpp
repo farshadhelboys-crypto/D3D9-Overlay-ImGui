@@ -1,6 +1,6 @@
 // =====================================================================
 //  ESP - VTable only + anti-blink + test aimbot + tabbed UI
-//  (EN / FA bilingual)  - 2026-10-25
+//  No offsets visible in UI
 // =====================================================================
 #include <Windows.h>
 #include <TlHelp32.h>
@@ -41,7 +41,7 @@ static const Loc L_Corners      = { "Corners",                  "Corners" };
 static const Loc L_HealthBar    = { "Health Bar",               "Health Bar" };
 static const Loc L_Distance     = { "Distance",                 "Distance" };
 static const Loc L_Thickness    = { "Thickness",                "Thickness" };
-static const Loc L_HeadOffset   = { "Head Offset",              "Head Offset" };
+static const Loc L_BoxHeight    = { "Box Height",               "Box Height" };
 static const Loc L_WidthRatio   = { "Width Ratio",              "Width Ratio" };
 static const Loc L_MaxHP        = { "Max HP",                   "Max HP" };
 static const Loc L_Side         = { "Side",                     "Side" };
@@ -54,12 +54,11 @@ static const Loc L_Telegram     = { "Telegram:",                "Telegram:" };
 static const Loc L_OpenTG       = { "Open Telegram",            "Open Telegram" };
 static const Loc L_CopyTG       = { "Copy @client_v34",         "Copy @client_v34" };
 
-// Tabs
 static const Loc L_TabMain      = { "Main",                     "اصلی" };
 static const Loc L_TabVisuals   = { "Visuals",                  "نمایش" };
 static const Loc L_TabAimbot    = { "Aimbot",                   "ایم‌بات" };
 static const Loc L_TabColors    = { "Colors",                   "رنگ‌ها" };
-static const Loc L_TabDebug     = { "Debug",                    "دیباگ" };
+static const Loc L_TabDebug     = { "Status",                   "وضعیت" };
 static const Loc L_TabContact   = { "Contact",                  "ارتباط" };
 
 namespace Off {
@@ -187,7 +186,7 @@ static void ScanVTableObjects() {
         g_tracked.push_back(te);
     }
     g_scanned = true;
-    sprintf_s(g_status, "Attached | VTable objects: %zu", g_rawObjects.size());
+    sprintf_s(g_status, "Attached | Players found: %zu", g_rawObjects.size());
 }
 
 static bool AttachFromUI() {
@@ -203,11 +202,11 @@ static bool AttachFromUI() {
 
     g_gameBase = GetModuleBase(pid, L"clientmod_game.dll");
     if (!g_gameBase) {
-        strcpy_s(g_status, "clientmod_game.dll not loaded yet");
+        strcpy_s(g_status, "Game module not loaded yet");
         CloseHandle(g_hProc); g_hProc = nullptr; return false;
     }
     g_attachedPid = pid;
-    strcpy_s(g_status, "Scanning VTable objects (wait)...");
+    strcpy_s(g_status, "Scanning players (wait)...");
     ScanVTableObjects();
     return true;
 }
@@ -326,11 +325,9 @@ static void RunTestAimbot(float targetX, float targetY, float sw, float sh) {
         mouse_event(MOUSEEVENTF_MOVE, mx, my, 0, 0);
 }
 
-// ===================== TABBED MENU =====================
 void RenderESPMenu() {
     if (!UI::IsWindowTargeted()) return;
 
-    // Compact window with forced scrollbar so scroll always works
     ImGui::SetNextWindowSize(ImVec2(360, 420), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSizeConstraints(ImVec2(320, 280), ImVec2(500, 700));
 
@@ -341,13 +338,11 @@ void RenderESPMenu() {
         return;
     }
 
-    // Header
     ImGui::TextColored(ImVec4(0.40f, 0.85f, 1.00f, 1.00f), "%s", L_Title());
     ImGui::SameLine();
     ImGui::TextDisabled("v2.2");
     ImGui::Separator();
 
-    // Language + Enable + Reattach (always visible)
     ImGui::Text("%s", L_Language());
     ImGui::SameLine();
     if (ImGui::RadioButton("EN", g_lang == Lang::EN)) g_lang = Lang::EN;
@@ -360,10 +355,8 @@ void RenderESPMenu() {
     ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "%s", g_status);
     ImGui::Separator();
 
-    // ===== TABS =====
     if (ImGui::BeginTabBar("EspTabs", ImGuiTabBarFlags_FittingPolicyScroll | ImGuiTabBarFlags_Reorderable))
     {
-        // --- Main ---
         if (ImGui::BeginTabItem(L_TabMain()))
         {
             ImGui::Checkbox(L_TeamCheck(), &cfg.teamCheck);
@@ -371,7 +364,6 @@ void RenderESPMenu() {
             ImGui::EndTabItem();
         }
 
-        // --- Visuals ---
         if (ImGui::BeginTabItem(L_TabVisuals()))
         {
             ImGui::Checkbox(L_Box(), &cfg.drawBox);
@@ -383,7 +375,7 @@ void RenderESPMenu() {
 
             ImGui::Separator();
             ImGui::SliderFloat(L_Thickness(), &cfg.thickness, 0.5f, 5.0f, "%.1f");
-            ImGui::SliderFloat(L_HeadOffset(), &cfg.headOffset, 40.0f, 120.0f, "%.0f");
+            ImGui::SliderFloat(L_BoxHeight(), &cfg.headOffset, 40.0f, 120.0f, "%.0f");
             ImGui::SliderFloat(L_WidthRatio(), &cfg.widthRatio, 0.2f, 0.8f, "%.2f");
 
             ImGui::Separator();
@@ -392,7 +384,6 @@ void RenderESPMenu() {
             ImGui::EndTabItem();
         }
 
-        // --- Aimbot ---
         if (ImGui::BeginTabItem(L_TabAimbot()))
         {
             ImGui::Checkbox(L_AimEnable(), &cfg.aimbot);
@@ -402,7 +393,6 @@ void RenderESPMenu() {
             ImGui::EndTabItem();
         }
 
-        // --- Colors ---
         if (ImGui::BeginTabItem(L_TabColors()))
         {
             ImGui::ColorEdit4(L_Enemy(), (float*)&cfg.enemyColor);
@@ -410,21 +400,16 @@ void RenderESPMenu() {
             ImGui::EndTabItem();
         }
 
-        // --- Debug ---
         if (ImGui::BeginTabItem(L_TabDebug()))
         {
-            ImGui::Text("PID         : %lu", (unsigned long)g_attachedPid);
-            ImGui::Text("Base        : 0x%llX", (unsigned long long)g_gameBase);
-            ImGui::Text("Have Local  : %s", g_haveLocal ? "YES" : "NO");
-            ImGui::Text("Local Pos   : %.1f %.1f %.1f", g_localPos.x, g_localPos.y, g_localPos.z);
-            ImGui::Text("Matrix OK   : %s", g_dbgVmOk ? "yes" : "no");
-            ImGui::Text("Raw VObjs   : %zu", g_rawObjects.size());
-            ImGui::Text("Tracked     : %d", g_dbgCount);
-            ImGui::Text("Drawn       : %d", g_dbgDrawn);
+            ImGui::Text("Connected   : %s", g_hProc ? "Yes" : "No");
+            ImGui::Text("Local Player: %s", g_haveLocal ? "Found" : "Not found");
+            ImGui::Text("Camera      : %s", g_dbgVmOk ? "OK" : "Failed");
+            ImGui::Text("Players     : %d", g_dbgCount);
+            ImGui::Text("Boxes drawn : %d", g_dbgDrawn);
             ImGui::EndTabItem();
         }
 
-        // --- Contact ---
         if (ImGui::BeginTabItem(L_TabContact()))
         {
             ImGui::Text("%s", L_Telegram());
@@ -477,7 +462,7 @@ void RenderESPBoxes() {
     float mat[16] = {};
     g_dbgVmOk = RPM(g_gameBase + Off::MATRIX_RVA, mat);
     if (!g_dbgVmOk) {
-        dl->AddText(ImVec2(20, 70), IM_COL32(255, 80, 80, 255), "Matrix read failed");
+        dl->AddText(ImVec2(20, 70), IM_COL32(255, 80, 80, 255), "Camera read failed");
         return;
     }
 
