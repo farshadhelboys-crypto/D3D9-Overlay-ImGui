@@ -1,6 +1,6 @@
 // =====================================================================
 //  ESP - VTable only + anti-blink + test aimbot + tabbed UI
-//  No offsets visible in UI
+//  Full EN/FA localization
 // =====================================================================
 #include <Windows.h>
 #include <TlHelp32.h>
@@ -30,29 +30,31 @@ struct Loc {
     const char* operator()() const { return g_lang == Lang::FA ? fa : en; }
 };
 
+// ---- Full bilingual strings ----
 static const Loc L_Title        = { "farshad pm Esp",           "farshad pm Esp" };
-static const Loc L_Language     = { "Language",                 "Language" };
-static const Loc L_EnableESP    = { "Enable ESP",               "Enable ESP" };
-static const Loc L_Reattach     = { "Re-attach / Rescan",       "Re-attach / Rescan" };
-static const Loc L_TeamCheck    = { "Team Check",               "Team Check" };
-static const Loc L_MaxDist      = { "Max Distance",             "Max Distance" };
-static const Loc L_Box          = { "Box",                      "Box" };
-static const Loc L_Corners      = { "Corners",                  "Corners" };
-static const Loc L_HealthBar    = { "Health Bar",               "Health Bar" };
-static const Loc L_Distance     = { "Distance",                 "Distance" };
-static const Loc L_Thickness    = { "Thickness",                "Thickness" };
-static const Loc L_BoxHeight    = { "Box Height",               "Box Height" };
-static const Loc L_WidthRatio   = { "Width Ratio",              "Width Ratio" };
-static const Loc L_MaxHP        = { "Max HP",                   "Max HP" };
-static const Loc L_Side         = { "Side",                     "Side" };
-static const Loc L_AimEnable    = { "Enable Aimbot (test)",     "Enable Aimbot (test)" };
-static const Loc L_AimSmooth    = { "Smooth",                   "Smooth" };
-static const Loc L_AimFov       = { "FOV (px)",                 "FOV (px)" };
-static const Loc L_Enemy        = { "Enemy",                    "Enemy" };
-static const Loc L_Mate         = { "Mate",                     "Mate" };
-static const Loc L_Telegram     = { "Telegram:",                "Telegram:" };
-static const Loc L_OpenTG       = { "Open Telegram",            "Open Telegram" };
-static const Loc L_CopyTG       = { "Copy @client_v34",         "Copy @client_v34" };
+static const Loc L_Language     = { "Language",                 "زبان" };
+static const Loc L_EnableESP    = { "Enable ESP",               "فعال کردن ESP" };
+static const Loc L_Reattach     = { "Re-attach / Rescan",       "اتصال مجدد / اسکن" };
+static const Loc L_TeamCheck    = { "Team Check",               "چک تیم" };
+static const Loc L_MaxDist      = { "Max Distance",             "حداکثر فاصله" };
+static const Loc L_Box          = { "Box",                      "باکس" };
+static const Loc L_Corners      = { "Corners",                  "گوشه‌ها" };
+static const Loc L_HealthBar    = { "Health Bar",               "نوار جان" };
+static const Loc L_Distance     = { "Distance",                 "فاصله" };
+static const Loc L_Thickness    = { "Thickness",                "ضخامت" };
+static const Loc L_BoxHeight    = { "Box Height",               "ارتفاع باکس" };
+static const Loc L_WidthRatio   = { "Width Ratio",              "نسبت عرض" };
+static const Loc L_MaxHP        = { "Max HP",                   "حداکثر جان" };
+static const Loc L_Side         = { "Side",                     "سمت" };
+static const Loc L_AimEnable    = { "Enable Aimbot (test)",     "فعال کردن ایم‌بات (تست)" };
+static const Loc L_AimSmooth    = { "Smooth",                   "نرمی" };
+static const Loc L_AimFov       = { "FOV (px)",                 "FOV (پیکسل)" };
+static const Loc L_AimHint      = { "Aims at closest box center inside FOV", "به مرکز نزدیک‌ترین باکس داخل FOV می‌چسبد" };
+static const Loc L_Enemy        = { "Enemy",                    "دشمن" };
+static const Loc L_Mate         = { "Mate",                     "هم‌تیمی" };
+static const Loc L_Telegram     = { "Telegram:",                "تلگرام:" };
+static const Loc L_OpenTG       = { "Open Telegram",            "باز کردن تلگرام" };
+static const Loc L_CopyTG       = { "Copy @client_v34",         "کپی @client_v34" };
 
 static const Loc L_TabMain      = { "Main",                     "اصلی" };
 static const Loc L_TabVisuals   = { "Visuals",                  "نمایش" };
@@ -60,6 +62,22 @@ static const Loc L_TabAimbot    = { "Aimbot",                   "ایم‌بات
 static const Loc L_TabColors    = { "Colors",                   "رنگ‌ها" };
 static const Loc L_TabDebug     = { "Status",                   "وضعیت" };
 static const Loc L_TabContact   = { "Contact",                  "ارتباط" };
+
+static const Loc L_Connected    = { "Connected",                "متصل" };
+static const Loc L_LocalPlayer  = { "Local Player",             "بازیکن خودی" };
+static const Loc L_Camera       = { "Camera",                   "دوربین" };
+static const Loc L_Players      = { "Players",                  "بازیکن‌ها" };
+static const Loc L_BoxesDrawn   = { "Boxes drawn",              "باکس‌های رسم‌شده" };
+static const Loc L_Yes          = { "Yes",                      "بله" };
+static const Loc L_No           = { "No",                       "خیر" };
+static const Loc L_Found        = { "Found",                    "پیدا شد" };
+static const Loc L_NotFound     = { "Not found",                "پیدا نشد" };
+static const Loc L_OK           = { "OK",                       "موفق" };
+static const Loc L_Failed       = { "Failed",                   "ناموفق" };
+static const Loc L_SideLeft     = { "Left",                     "چپ" };
+static const Loc L_SideRight    = { "Right",                    "راست" };
+static const Loc L_SideTop      = { "Top",                      "بالا" };
+static const Loc L_SideBottom   = { "Bottom",                   "پایین" };
 
 namespace Off {
     constexpr uintptr_t MY_POS_X     = 0x242F510;
@@ -149,7 +167,7 @@ static void Detach() {
     g_rawObjects.clear();
     g_tracked.clear();
     g_scanned = false;
-    strcpy_s(g_status, "Not attached");
+    strcpy_s(g_status, g_lang == Lang::FA ? "متصل نیست" : "Not attached");
 }
 
 static void ScanVTableObjects() {
@@ -186,27 +204,39 @@ static void ScanVTableObjects() {
         g_tracked.push_back(te);
     }
     g_scanned = true;
-    sprintf_s(g_status, "Attached | Players found: %zu", g_rawObjects.size());
+    if (g_lang == Lang::FA)
+        sprintf_s(g_status, "متصل | بازیکن پیدا شده: %zu", g_rawObjects.size());
+    else
+        sprintf_s(g_status, "Attached | Players found: %zu", g_rawObjects.size());
 }
 
 static bool AttachFromUI() {
     Detach();
-    if (!UI::IsWindowTargeted()) { strcpy_s(g_status, "No target window"); return false; }
+    if (!UI::IsWindowTargeted()) {
+        strcpy_s(g_status, g_lang == Lang::FA ? "پنجره هدف انتخاب نشده" : "No target window");
+        return false;
+    }
     HWND hwnd = UI::GetTargetWindow();
     DWORD pid = UI::GetTargetPID();
     if (!pid && hwnd) GetWindowThreadProcessId(hwnd, &pid);
-    if (!pid) { strcpy_s(g_status, "Target PID invalid"); return false; }
+    if (!pid) {
+        strcpy_s(g_status, g_lang == Lang::FA ? "PID نامعتبر" : "Target PID invalid");
+        return false;
+    }
 
     g_hProc = OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, FALSE, pid);
-    if (!g_hProc) { strcpy_s(g_status, "OpenProcess failed (run as admin)"); return false; }
+    if (!g_hProc) {
+        strcpy_s(g_status, g_lang == Lang::FA ? "خطا در OpenProcess (ادمین اجرا کن)" : "OpenProcess failed (run as admin)");
+        return false;
+    }
 
     g_gameBase = GetModuleBase(pid, L"clientmod_game.dll");
     if (!g_gameBase) {
-        strcpy_s(g_status, "Game module not loaded yet");
+        strcpy_s(g_status, g_lang == Lang::FA ? "ماژول بازی هنوز لود نشده" : "Game module not loaded yet");
         CloseHandle(g_hProc); g_hProc = nullptr; return false;
     }
     g_attachedPid = pid;
-    strcpy_s(g_status, "Scanning players (wait)...");
+    strcpy_s(g_status, g_lang == Lang::FA ? "در حال اسکن بازیکن‌ها..." : "Scanning players (wait)...");
     ScanVTableObjects();
     return true;
 }
@@ -340,9 +370,10 @@ void RenderESPMenu() {
 
     ImGui::TextColored(ImVec4(0.40f, 0.85f, 1.00f, 1.00f), "%s", L_Title());
     ImGui::SameLine();
-    ImGui::TextDisabled("v2.2");
+    ImGui::TextDisabled("v2.3");
     ImGui::Separator();
 
+    // Language switch — must visibly change labels
     ImGui::Text("%s", L_Language());
     ImGui::SameLine();
     if (ImGui::RadioButton("EN", g_lang == Lang::EN)) g_lang = Lang::EN;
@@ -380,7 +411,11 @@ void RenderESPMenu() {
 
             ImGui::Separator();
             ImGui::SliderFloat(L_MaxHP(), &cfg.healthMax, 50.0f, 500.0f, "%.0f");
-            ImGui::Combo(L_Side(), &cfg.healthSide, "Left\0Right\0Top\0Bottom\0");
+
+            // Bilingual side combo
+            const char* sides_en = "Left\0Right\0Top\0Bottom\0";
+            const char* sides_fa = "چپ\0راست\0بالا\0پایین\0";
+            ImGui::Combo(L_Side(), &cfg.healthSide, g_lang == Lang::FA ? sides_fa : sides_en);
             ImGui::EndTabItem();
         }
 
@@ -389,7 +424,7 @@ void RenderESPMenu() {
             ImGui::Checkbox(L_AimEnable(), &cfg.aimbot);
             ImGui::SliderFloat(L_AimSmooth(), &cfg.aimSmooth, 1.0f, 20.0f, "%.1f");
             ImGui::SliderFloat(L_AimFov(), &cfg.aimFov, 30.0f, 500.0f, "%.0f");
-            ImGui::TextDisabled("Aims at closest box center inside FOV");
+            ImGui::TextDisabled("%s", L_AimHint());
             ImGui::EndTabItem();
         }
 
@@ -402,11 +437,11 @@ void RenderESPMenu() {
 
         if (ImGui::BeginTabItem(L_TabDebug()))
         {
-            ImGui::Text("Connected   : %s", g_hProc ? "Yes" : "No");
-            ImGui::Text("Local Player: %s", g_haveLocal ? "Found" : "Not found");
-            ImGui::Text("Camera      : %s", g_dbgVmOk ? "OK" : "Failed");
-            ImGui::Text("Players     : %d", g_dbgCount);
-            ImGui::Text("Boxes drawn : %d", g_dbgDrawn);
+            ImGui::Text("%s : %s", L_Connected(), g_hProc ? L_Yes() : L_No());
+            ImGui::Text("%s : %s", L_LocalPlayer(), g_haveLocal ? L_Found() : L_NotFound());
+            ImGui::Text("%s : %s", L_Camera(), g_dbgVmOk ? L_OK() : L_Failed());
+            ImGui::Text("%s : %d", L_Players(), g_dbgCount);
+            ImGui::Text("%s : %d", L_BoxesDrawn(), g_dbgDrawn);
             ImGui::EndTabItem();
         }
 
@@ -462,7 +497,8 @@ void RenderESPBoxes() {
     float mat[16] = {};
     g_dbgVmOk = RPM(g_gameBase + Off::MATRIX_RVA, mat);
     if (!g_dbgVmOk) {
-        dl->AddText(ImVec2(20, 70), IM_COL32(255, 80, 80, 255), "Camera read failed");
+        dl->AddText(ImVec2(20, 70), IM_COL32(255, 80, 80, 255),
+            g_lang == Lang::FA ? "خواندن دوربین ناموفق" : "Camera read failed");
         return;
     }
 
