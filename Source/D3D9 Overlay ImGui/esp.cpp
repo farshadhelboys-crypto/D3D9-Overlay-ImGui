@@ -1,6 +1,6 @@
 // =====================================================================
-//  ESP - VTable only + anti-blink + test aimbot + tabbed UI
-//  Full EN/FA localization
+//  ESP - VTable only + anti-blink + aim assist + full EN/FA
+//  v2.4 - distance / box settings / aim actually applied
 // =====================================================================
 #include <Windows.h>
 #include <TlHelp32.h>
@@ -30,7 +30,6 @@ struct Loc {
     const char* operator()() const { return g_lang == Lang::FA ? fa : en; }
 };
 
-// ---- Full bilingual strings ----
 static const Loc L_Title        = { "farshad pm Esp",           "farshad pm Esp" };
 static const Loc L_Language     = { "Language",                 "زبان" };
 static const Loc L_EnableESP    = { "Enable ESP",               "فعال کردن ESP" };
@@ -46,10 +45,10 @@ static const Loc L_BoxHeight    = { "Box Height",               "ارتفاع ب
 static const Loc L_WidthRatio   = { "Width Ratio",              "نسبت عرض" };
 static const Loc L_MaxHP        = { "Max HP",                   "حداکثر جان" };
 static const Loc L_Side         = { "Side",                     "سمت" };
-static const Loc L_AimEnable    = { "Enable Aimbot (test)",     "فعال کردن ایم‌بات (تست)" };
+static const Loc L_AimEnable    = { "Enable Aim Assist",        "فعال کردن ایم‌اسیست" };
 static const Loc L_AimSmooth    = { "Smooth",                   "نرمی" };
 static const Loc L_AimFov       = { "FOV (px)",                 "FOV (پیکسل)" };
-static const Loc L_AimHint      = { "Aims at closest box center inside FOV", "به مرکز نزدیک‌ترین باکس داخل FOV می‌چسبد" };
+static const Loc L_AimHint      = { "Hold RMB or always-on; aims at upper body", "RMB نگه دار یا همیشه روشن؛ به بالاتنه می‌چسبد" };
 static const Loc L_Enemy        = { "Enemy",                    "دشمن" };
 static const Loc L_Mate         = { "Mate",                     "هم‌تیمی" };
 static const Loc L_Telegram     = { "Telegram:",                "تلگرام:" };
@@ -74,10 +73,6 @@ static const Loc L_Found        = { "Found",                    "پیدا شد" 
 static const Loc L_NotFound     = { "Not found",                "پیدا نشد" };
 static const Loc L_OK           = { "OK",                       "موفق" };
 static const Loc L_Failed       = { "Failed",                   "ناموفق" };
-static const Loc L_SideLeft     = { "Left",                     "چپ" };
-static const Loc L_SideRight    = { "Right",                    "راست" };
-static const Loc L_SideTop      = { "Top",                      "بالا" };
-static const Loc L_SideBottom   = { "Bottom",                   "پایین" };
 
 namespace Off {
     constexpr uintptr_t MY_POS_X     = 0x242F510;
@@ -111,10 +106,11 @@ struct EspConfig {
     bool  drawHealth    = false;
     bool  drawDistance  = true;
     bool  aimbot        = false;
-    float aimSmooth     = 6.0f;
-    float aimFov        = 180.0f;
-    float headOffset    = 72.0f;
-    float widthRatio    = 0.42f;
+    bool  aimOnlyRMB    = true;   // only when right mouse held
+    float aimSmooth     = 4.0f;
+    float aimFov        = 220.0f;
+    float headOffset    = 72.0f;  // world units added to Z for head
+    float widthRatio    = 0.42f;  // box width = height * ratio
     float thickness     = 1.8f;
     float maxDistance   = 2000.0f;
     float healthMax     = 100.0f;
@@ -342,23 +338,59 @@ static void DrawRotatingLogo() {
     ImRotateEnd(dl, angle, ImVec2(posX, posY));
 }
 
-static void RunTestAimbot(float targetX, float targetY, float sw, float sh) {
+// Reliable relative mouse move via SendInput
+static void MoveMouseRel(int dx, int dy) {
+    if (dx == 0 && dy == 0) return;
+    INPUT in{};
+    in.type = INPUT_MOUSE;
+    in.mi.dx = dx;
+    in.mi.dy = dy;
+    in.mi.dwFlags = MOUSEEVENTF_MOVE;
+    SendInput(1, &in, sizeof(INPUT));
+}
+
+static void RunAimAssist(float targetX, float targetY, float sw, float sh) {
     if (!cfg.aimbot) return;
-    float cx = sw * 0.5f, cy = sh * 0.5f;
-    float dx = targetX - cx, dy = targetY - cy;
-    float dist = sqrtf(dx*dx + dy*dy);
-    if (dist < 2.0f || dist > cfg.aimFov) return;
+
+    // Optional: only when RMB held
+    if (cfg.aimOnlyRMB && !(GetAsyncKeyState(VK_RBUTTON) & 0x8000))
+        return;
+
+    float cx = sw * 0.5f;
+    float cy = sh * 0.5f;
+    float dx = targetX - cx;
+    float dy = targetY - cy;
+    float dist = sqrtf(dx * dx + dy * dy);
+
+    if (dist < 1.5f) return;                 // already on target
+    if (dist > cfg.aimFov) return;           // outside FOV
+
+    // Smooth: higher = slower. Clamp so we always move at least 1px when far.
     float smooth = cfg.aimSmooth < 1.0f ? 1.0f : cfg.aimSmooth;
-    int mx = (int)(dx / smooth);
-    int my = (int)(dy / smooth);
-    if (mx != 0 || my != 0)
-        mouse_event(MOUSEEVENTF_MOVE, mx, my, 0, 0);
+    float stepX = dx / smooth;
+    float stepY = dy / smooth;
+
+    // Cap max step per frame so it doesn't jump too hard
+    const float maxStep = 40.0f;
+    if (stepX >  maxStep) stepX =  maxStep;
+    if (stepX < -maxStep) stepX = -maxStep;
+    if (stepY >  maxStep) stepY =  maxStep;
+    if (stepY < -maxStep) stepY = -maxStep;
+
+    int mx = (int)(stepX >= 0 ? stepX + 0.5f : stepX - 0.5f);
+    int my = (int)(stepY >= 0 ? stepY + 0.5f : stepY - 0.5f);
+
+    // Ensure non-zero movement when still far from target
+    if (mx == 0 && fabsf(dx) > 2.0f) mx = (dx > 0) ? 1 : -1;
+    if (my == 0 && fabsf(dy) > 2.0f) my = (dy > 0) ? 1 : -1;
+
+    MoveMouseRel(mx, my);
 }
 
 void RenderESPMenu() {
     if (!UI::IsWindowTargeted()) return;
 
-    ImGui::SetNextWindowSize(ImVec2(360, 420), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(360, 440), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSizeConstraints(ImVec2(320, 280), ImVec2(500, 700));
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysVerticalScrollbar;
@@ -370,10 +402,9 @@ void RenderESPMenu() {
 
     ImGui::TextColored(ImVec4(0.40f, 0.85f, 1.00f, 1.00f), "%s", L_Title());
     ImGui::SameLine();
-    ImGui::TextDisabled("v2.3");
+    ImGui::TextDisabled("v2.4");
     ImGui::Separator();
 
-    // Language switch — must visibly change labels
     ImGui::Text("%s", L_Language());
     ImGui::SameLine();
     if (ImGui::RadioButton("EN", g_lang == Lang::EN)) g_lang = Lang::EN;
@@ -391,7 +422,11 @@ void RenderESPMenu() {
         if (ImGui::BeginTabItem(L_TabMain()))
         {
             ImGui::Checkbox(L_TeamCheck(), &cfg.teamCheck);
-            ImGui::SliderFloat(L_MaxDist(), &cfg.maxDistance, 50.0f, 4000.0f, "%.0f");
+            // Max distance — this value is used every frame in the draw loop
+            ImGui::SliderFloat(L_MaxDist(), &cfg.maxDistance, 50.0f, 4000.0f, "%.0f m");
+            ImGui::TextDisabled(g_lang == Lang::FA
+                ? "باکس‌های دورتر از این مقدار کشیده نمی‌شوند"
+                : "Boxes farther than this are not drawn");
             ImGui::EndTabItem();
         }
 
@@ -405,14 +440,13 @@ void RenderESPMenu() {
             ImGui::Checkbox(L_Distance(), &cfg.drawDistance);
 
             ImGui::Separator();
-            ImGui::SliderFloat(L_Thickness(), &cfg.thickness, 0.5f, 5.0f, "%.1f");
-            ImGui::SliderFloat(L_BoxHeight(), &cfg.headOffset, 40.0f, 120.0f, "%.0f");
-            ImGui::SliderFloat(L_WidthRatio(), &cfg.widthRatio, 0.2f, 0.8f, "%.2f");
+            // These three directly control drawn geometry every frame
+            ImGui::SliderFloat(L_Thickness(), &cfg.thickness, 0.5f, 6.0f, "%.1f");
+            ImGui::SliderFloat(L_BoxHeight(), &cfg.headOffset, 30.0f, 140.0f, "%.0f");
+            ImGui::SliderFloat(L_WidthRatio(), &cfg.widthRatio, 0.15f, 0.90f, "%.2f");
 
             ImGui::Separator();
             ImGui::SliderFloat(L_MaxHP(), &cfg.healthMax, 50.0f, 500.0f, "%.0f");
-
-            // Bilingual side combo
             const char* sides_en = "Left\0Right\0Top\0Bottom\0";
             const char* sides_fa = "چپ\0راست\0بالا\0پایین\0";
             ImGui::Combo(L_Side(), &cfg.healthSide, g_lang == Lang::FA ? sides_fa : sides_en);
@@ -422,8 +456,9 @@ void RenderESPMenu() {
         if (ImGui::BeginTabItem(L_TabAimbot()))
         {
             ImGui::Checkbox(L_AimEnable(), &cfg.aimbot);
-            ImGui::SliderFloat(L_AimSmooth(), &cfg.aimSmooth, 1.0f, 20.0f, "%.1f");
-            ImGui::SliderFloat(L_AimFov(), &cfg.aimFov, 30.0f, 500.0f, "%.0f");
+            ImGui::Checkbox(g_lang == Lang::FA ? "فقط با RMB" : "Only while RMB held", &cfg.aimOnlyRMB);
+            ImGui::SliderFloat(L_AimSmooth(), &cfg.aimSmooth, 1.0f, 15.0f, "%.1f");
+            ImGui::SliderFloat(L_AimFov(), &cfg.aimFov, 40.0f, 600.0f, "%.0f");
             ImGui::TextDisabled("%s", L_AimHint());
             ImGui::EndTabItem();
         }
@@ -442,6 +477,7 @@ void RenderESPMenu() {
             ImGui::Text("%s : %s", L_Camera(), g_dbgVmOk ? L_OK() : L_Failed());
             ImGui::Text("%s : %d", L_Players(), g_dbgCount);
             ImGui::Text("%s : %d", L_BoxesDrawn(), g_dbgDrawn);
+            ImGui::Text("MaxDist cfg : %.0f", cfg.maxDistance);
             ImGui::EndTabItem();
         }
 
@@ -502,6 +538,16 @@ void RenderESPBoxes() {
         return;
     }
 
+    // Snap config values used this frame (so UI changes apply immediately)
+    const float maxDist     = cfg.maxDistance;
+    const float boxHeightZ  = cfg.headOffset;   // world Z offset for head
+    const float widthRatio  = cfg.widthRatio;
+    const float thickness   = cfg.thickness;
+    const bool  doBox       = cfg.drawBox;
+    const bool  doCorners   = cfg.drawCorners;
+    const bool  doHealth    = cfg.drawHealth;
+    const bool  doDistText  = cfg.drawDistance;
+
     g_dbgDrawn = 0;
     g_dbgCount = 0;
 
@@ -538,42 +584,56 @@ void RenderESPBoxes() {
 
         if (!te.valid) continue;
 
-        float dist = 0.0f;
+        // ---- Distance filter (REAL max distance) ----
+        float dist = -1.0f;
         if (g_haveLocal) {
             float dx = te.pos.x - g_localPos.x;
             float dy = te.pos.y - g_localPos.y;
             float dz = te.pos.z - g_localPos.z;
-            dist = sqrtf(dx*dx + dy*dy + dz*dz);
+            dist = sqrtf(dx * dx + dy * dy + dz * dz);
+
+            // Skip self / extremely close
+            if (dist < 15.0f) continue;
+
+            // HARD filter by user slider
+            if (dist > maxDist) continue;
         }
-        if (dist < 40.0f || dist > cfg.maxDistance) continue;
+        // If we don't have local pos, still draw (can't filter by distance)
 
         ++g_dbgCount;
 
+        // ---- Box geometry from REAL config ----
+        // feet = origin, head = origin + (0,0,boxHeightZ)
         Vec3 head = te.pos;
-        head.z += cfg.headOffset;
+        head.z += boxHeightZ;
 
-        Vec2 feet{}, headScr{};
-        if (!WorldToScreen(te.pos, mat, sw, sh, feet)) continue;
+        Vec2 feetScr{}, headScr{};
+        if (!WorldToScreen(te.pos, mat, sw, sh, feetScr)) continue;
         if (!WorldToScreen(head, mat, sw, sh, headScr)) continue;
 
-        float h = feet.y - headScr.y;
-        if (h < 6.0f || h > 1800.0f) continue;
-        float w = h * cfg.widthRatio;
+        float h = feetScr.y - headScr.y;
+        if (h < 6.0f || h > 2000.0f) continue;
+
+        // width driven by Width Ratio slider
+        float w = h * widthRatio;
+        if (w < 2.0f) w = 2.0f;
+
         float bx = headScr.x - w * 0.5f;
         float by = headScr.y;
 
-        float boxCx = bx + w * 0.5f;
-        float boxCy = by + h * 0.5f;
+        // Aim point = upper chest (about 25% down from head)
+        float aimX = headScr.x;
+        float aimY = headScr.y + h * 0.25f;
 
         ImU32 col = C(cfg.enemyColor);
 
-        if (cfg.drawBox)
-            dl->AddRect(ImVec2(bx, by), ImVec2(bx + w, by + h), col, 0.0f, 0, cfg.thickness);
-        if (cfg.drawCorners)
-            DrawCorners(dl, bx, by, w, h, col, cfg.thickness + 0.5f);
-        if (cfg.drawHealth && te.hp > 0)
+        if (doBox)
+            dl->AddRect(ImVec2(bx, by), ImVec2(bx + w, by + h), col, 0.0f, 0, thickness);
+        if (doCorners)
+            DrawCorners(dl, bx, by, w, h, col, thickness + 0.5f);
+        if (doHealth && te.hp > 0)
             DrawHealthBar(dl, bx, by, w, h, (float)te.hp / cfg.healthMax, cfg.healthSide);
-        if (cfg.drawDistance) {
+        if (doDistText && dist >= 0.0f) {
             char buf[32];
             sprintf_s(buf, "%.0fm", dist);
             ImVec2 ts = ImGui::CalcTextSize(buf);
@@ -582,23 +642,29 @@ void RenderESPBoxes() {
 
         ++g_dbgDrawn;
 
+        // Aim candidate: closest to crosshair inside FOV
         if (cfg.aimbot) {
-            float adx = boxCx - sw * 0.5f;
-            float ady = boxCy - sh * 0.5f;
-            float ad = sqrtf(adx*adx + ady*ady);
-            if (ad < bestAimDist && ad < cfg.aimFov) {
+            float adx = aimX - sw * 0.5f;
+            float ady = aimY - sh * 0.5f;
+            float ad = sqrtf(adx * adx + ady * ady);
+            if (ad < bestAimDist && ad <= cfg.aimFov) {
                 bestAimDist = ad;
-                bestAimX = boxCx;
-                bestAimY = boxCy;
+                bestAimX = aimX;
+                bestAimY = aimY;
                 hasAimTarget = true;
             }
         }
     }
 
+    // Draw FOV circle when aim is on (visual feedback)
+    if (cfg.aimbot) {
+        dl->AddCircle(ImVec2(sw * 0.5f, sh * 0.5f), cfg.aimFov, IM_COL32(255, 255, 255, 40), 64, 1.0f);
+    }
+
     if (hasAimTarget) {
-        dl->AddLine(ImVec2(bestAimX - 6, bestAimY), ImVec2(bestAimX + 6, bestAimY), IM_COL32(0, 255, 0, 200), 1.5f);
-        dl->AddLine(ImVec2(bestAimX, bestAimY - 6), ImVec2(bestAimX, bestAimY + 6), IM_COL32(0, 255, 0, 200), 1.5f);
-        RunTestAimbot(bestAimX, bestAimY, sw, sh);
+        dl->AddLine(ImVec2(bestAimX - 8, bestAimY), ImVec2(bestAimX + 8, bestAimY), IM_COL32(0, 255, 0, 220), 1.5f);
+        dl->AddLine(ImVec2(bestAimX, bestAimY - 8), ImVec2(bestAimX, bestAimY + 8), IM_COL32(0, 255, 0, 220), 1.5f);
+        RunAimAssist(bestAimX, bestAimY, sw, sh);
     }
 }
 
