@@ -1,6 +1,7 @@
 // =====================================================================
-//  ESP - VTable + CE verified local chains + aim assist + EN/FA
-//  v2.5 - includes Farshad CE offsets (pos / team / HP)
+//  farshad pm Esp  — ClientMod (CMLauncher)
+//  Entity List path from offsets_cm.hpp dump
+//  v3.0  |  EN / FA (FA strings fixed for LTR ImGui)
 // =====================================================================
 #include <Windows.h>
 #include <TlHelp32.h>
@@ -9,8 +10,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cfloat>
+#include <string>
 #include <vector>
-#include <algorithm>
 #include "ImGui/imgui.h"
 #include "UI.h"
 #include "esp.h"
@@ -21,165 +22,176 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-enum class Lang { EN = 0, FA = 1 };
-static Lang g_lang = Lang::EN;
-
-struct Loc {
-    const char* en;
-    const char* fa;
-    const char* operator()() const { return g_lang == Lang::FA ? fa : en; }
-};
-
-static const Loc L_Title        = { "farshad pm Esp",           "farshad pm Esp" };
-static const Loc L_Language     = { "Language",                 "زبان" };
-static const Loc L_EnableESP    = { "Enable ESP",               "فعال کردن ESP" };
-static const Loc L_Reattach     = { "Re-attach / Rescan",       "اتصال مجدد / اسکن" };
-static const Loc L_TeamCheck    = { "Team Check",               "چک تیم" };
-static const Loc L_MaxDist      = { "Max Distance",             "حداکثر فاصله" };
-static const Loc L_Box          = { "Box",                      "باکس" };
-static const Loc L_Corners      = { "Corners",                  "گوشه‌ها" };
-static const Loc L_HealthBar    = { "Health Bar",               "نوار جان" };
-static const Loc L_Distance     = { "Distance",                 "فاصله" };
-static const Loc L_Thickness    = { "Thickness",                "ضخامت" };
-static const Loc L_BoxHeight    = { "Box Height",               "ارتفاع باکس" };
-static const Loc L_WidthRatio   = { "Width Ratio",              "نسبت عرض" };
-static const Loc L_MaxHP        = { "Max HP",                   "حداکثر جان" };
-static const Loc L_Side         = { "Side",                     "سمت" };
-static const Loc L_AimEnable    = { "Enable Aim Assist",        "فعال کردن ایم‌اسیست" };
-static const Loc L_AimSmooth    = { "Smooth",                   "نرمی" };
-static const Loc L_AimFov       = { "FOV (px)",                 "FOV (پیکسل)" };
-static const Loc L_AimHint      = { "Hold RMB or always-on; aims at upper body", "RMB نگه دار یا همیشه روشن؛ به بالاتنه می‌چسبد" };
-static const Loc L_Enemy        = { "Enemy",                    "دشمن" };
-static const Loc L_Mate         = { "Mate",                     "هم‌تیمی" };
-static const Loc L_Telegram     = { "Telegram:",                "تلگرام:" };
-static const Loc L_OpenTG       = { "Open Telegram",            "باز کردن تلگرام" };
-static const Loc L_CopyTG       = { "Copy @client_v34",         "کپی @client_v34" };
-
-static const Loc L_TabMain      = { "Main",                     "اصلی" };
-static const Loc L_TabVisuals   = { "Visuals",                  "نمایش" };
-static const Loc L_TabAimbot    = { "Aimbot",                   "ایم‌بات" };
-static const Loc L_TabColors    = { "Colors",                   "رنگ‌ها" };
-static const Loc L_TabDebug     = { "Status",                   "وضعیت" };
-static const Loc L_TabContact   = { "Contact",                  "ارتباط" };
-
-static const Loc L_Connected    = { "Connected",                "متصل" };
-static const Loc L_LocalPlayer  = { "Local Player",             "بازیکن خودی" };
-static const Loc L_Camera       = { "Camera",                   "دوربین" };
-static const Loc L_Players      = { "Players",                  "بازیکن‌ها" };
-static const Loc L_BoxesDrawn   = { "Boxes drawn",              "باکس‌های رسم‌شده" };
-static const Loc L_Yes          = { "Yes",                      "بله" };
-static const Loc L_No           = { "No",                       "خیر" };
-static const Loc L_Found        = { "Found",                    "پیدا شد" };
-static const Loc L_NotFound     = { "Not found",                "پیدا نشد" };
-static const Loc L_OK           = { "OK",                       "موفق" };
-static const Loc L_Failed       = { "Failed",                   "ناموفق" };
-
-// ============================================================
-// OFFSETS
-// ============================================================
+// ---------------------------------------------------------------------------
+// Offsets from ClientMod dumper (offsets_cm.hpp)
+// Module: clientmod_game.dll  (unless noted)
+// ---------------------------------------------------------------------------
 namespace Off {
-    // --- CE verified pointer chains (Farshad) ---
-    // Self Position: [dll+0xE1F664] -> ptr -> +0/+4/+8 floats
-    constexpr uintptr_t MY_POS_PTR_RVA  = 0x00E1F664;
+    // Entity array
+    constexpr uintptr_t ENTITY_ARRAY   = 0x25B9390; // pointer / base
+    constexpr uintptr_t ENTITY_COUNT   = 0x25B939C; // max / count
+    constexpr uintptr_t ENTITY_STRIDE  = 0x274;
 
-    // Self Team: [dll+0x2E1616C] -> ptr + 0x1D8 (Int32)  2=T  3=CT
-    constexpr uintptr_t MY_TEAM_PTR_RVA = 0x02E1616C;
-    constexpr uintptr_t MY_TEAM_OFFSET  = 0x1D8;
+    // Alternate list pointer (IClientEntityList*)
+    constexpr uintptr_t CLIENT_ENTITY_LIST = 0x247B7D0;
 
-    // HP chain: [dll+0x29BD00C] -> p1 + 0x38 -> p2 + 0x48
-    constexpr uintptr_t HP_PTR_RVA      = 0x029BD00C;
-    constexpr uintptr_t HP_OFFSET1      = 0x38;
-    constexpr uintptr_t HP_OFFSET2      = 0x48;
+    // Matrices
+    constexpr uintptr_t VIEW_MATRIX     = 0x257B2C8;
+    constexpr uintptr_t WORLD_TO_SCREEN = 0x257B250;
+    constexpr uintptr_t MATRIX_BUFFER   = 0x257B280;
+    constexpr uintptr_t VIEW_MATRIX_ALT = 0xFC7B00;
 
-    // Direct floats (from working Python) — fallback for local pos
+    // Netvars on entity object
+    constexpr uintptr_t m_iHealth       = 0x11C;
+    constexpr uintptr_t m_lifeState     = 0x120; // 0 = alive
+    constexpr uintptr_t m_iTeamNum      = 0x1FC; // 2=T  3=CT
+    constexpr uintptr_t m_vecOrigin     = 0x318;
+    constexpr uintptr_t m_vecAbsOrigin  = 0x290;
+    constexpr uintptr_t m_vecViewOffset = 0x334;
+    constexpr uintptr_t m_bDormant      = 0x596;
+
+    // Local helpers (still useful)
     constexpr uintptr_t MY_POS_X        = 0x242F510;
     constexpr uintptr_t MY_POS_Y        = 0x242F514;
     constexpr uintptr_t MY_POS_Z        = 0x242F518;
-
-    // View matrix
-    constexpr uintptr_t MATRIX_RVA      = 0x27603D0;
-
-    // VTable entities
-    constexpr uintptr_t VTABLE_1        = 0x01DDAC3C;
-    constexpr uintptr_t VTABLE_2        = 0x01DDA9C8;
-    constexpr uintptr_t V_OBJ_ORIGIN    = 0x538;
-    constexpr uintptr_t OBJ_HP_OFF      = 0x11C;
-    constexpr uintptr_t OBJ_TEAM_OFF    = 0xD4;
+    constexpr uintptr_t MY_POS_PTR_RVA  = 0x00E1F664;
+    constexpr uintptr_t MY_TEAM_PTR_RVA = 0x02E1616C;
+    constexpr uintptr_t MY_TEAM_OFFSET  = 0x1D8;
 }
+
+enum class Lang { EN = 0, FA = 1 };
+static Lang g_lang = Lang::EN;
+
+// Reverse UTF-8 string so Persian displays correctly in LTR ImGui
+static std::string FaFix(const char* s) {
+    if (!s || !*s) return {};
+    std::vector<std::string> chars;
+    const unsigned char* p = (const unsigned char*)s;
+    while (*p) {
+        int n = 1;
+        if ((*p & 0x80) == 0) n = 1;
+        else if ((*p & 0xE0) == 0xC0) n = 2;
+        else if ((*p & 0xF0) == 0xE0) n = 3;
+        else if ((*p & 0xF8) == 0xF0) n = 4;
+        chars.emplace_back(reinterpret_cast<const char*>(p), n);
+        p += n;
+    }
+    std::string out;
+    for (int i = (int)chars.size() - 1; i >= 0; --i)
+        out += chars[i];
+    return out;
+}
+
+struct Loc {
+    const char* en;
+    const char* fa; // stored logical (correct reading order); displayed reversed when FA
+    std::string buf;
+    const char* operator()() {
+        if (g_lang != Lang::FA) return en;
+        buf = FaFix(fa);
+        return buf.c_str();
+    }
+};
+
+static Loc L_Title      = { "farshad pm Esp",     "farshad pm Esp" };
+static Loc L_Language   = { "Language",           "زبان" };
+static Loc L_EnableESP  = { "Enable ESP",         "فعال کردن ای‌اس‌پی" };
+static Loc L_Reattach   = { "Re-attach",          "اتصال مجدد" };
+static Loc L_TeamCheck  = { "Team Check",         "چک تیم" };
+static Loc L_MaxDist    = { "Max Distance",       "حداکثر فاصله" };
+static Loc L_Box        = { "Box",                "باکس" };
+static Loc L_Corners    = { "Corners",            "گوشه" };
+static Loc L_HealthBar  = { "Health Bar",         "نوار جان" };
+static Loc L_Distance   = { "Distance",           "فاصله" };
+static Loc L_Thickness  = { "Thickness",          "ضخامت" };
+static Loc L_BoxHeight  = { "Box Height",         "ارتفاع باکس" };
+static Loc L_WidthRatio = { "Width Ratio",        "نسبت عرض" };
+static Loc L_MaxHP      = { "Max HP",             "حداکثر جان" };
+static Loc L_Side       = { "Side",               "سمت" };
+static Loc L_AimEnable  = { "Enable Aim Assist",  "فعال کردن ایم اسیست" };
+static Loc L_AimSmooth  = { "Smooth",             "نرمی" };
+static Loc L_AimFov     = { "FOV",                "میدان دید" };
+static Loc L_AimRMB     = { "Only while RMB",     "فقط با کلیک راست" };
+static Loc L_Enemy      = { "Enemy",              "دشمن" };
+static Loc L_Mate       = { "Mate",               "همتیمی" };
+static Loc L_Telegram   = { "Telegram:",          "تلگرام:" };
+static Loc L_OpenTG     = { "Open Telegram",      "باز کردن تلگرام" };
+static Loc L_CopyTG     = { "Copy @client_v34",   "کپی شناسه" };
+
+static Loc L_TabMain    = { "Main",     "اصلی" };
+static Loc L_TabVisuals = { "Visuals",  "نمایش" };
+static Loc L_TabAim     = { "Aim",      "ایم" };
+static Loc L_TabColors  = { "Colors",   "رنگ" };
+static Loc L_TabStatus  = { "Status",   "وضعیت" };
+static Loc L_TabContact = { "Contact",  "ارتباط" };
+
+static Loc L_Connected  = { "Connected",     "اتصال" };
+static Loc L_LocalP     = { "Local Player",  "بازیکن خودی" };
+static Loc L_Camera     = { "Camera",        "دوربین" };
+static Loc L_Players    = { "Players",       "بازیکنان" };
+static Loc L_Drawn      = { "Boxes drawn",   "باکس رسم شده" };
+static Loc L_Yes        = { "Yes", "بله" };
+static Loc L_No         = { "No",  "خیر" };
+static Loc L_OK         = { "OK",  "موفق" };
+static Loc L_Fail       = { "Fail","ناموفق" };
+static Loc L_Found      = { "Found", "پیدا شد" };
+static Loc L_NotFound   = { "Not found", "پیدا نشد" };
 
 struct Vec3 { float x, y, z; };
 struct Vec2 { float x, y; };
 
-struct TrackedEntity {
-    uintptr_t obj = 0;
-    Vec3      pos = {0,0,0};
-    int       hp = 0;
-    int       team = 0;
-    int       life = 0;
-    bool      valid = false;
-};
-
 struct EspConfig {
-    bool  enabled       = true;
-    bool  teamCheck     = false;
-    bool  drawBox       = true;
-    bool  drawCorners   = false;
-    bool  drawHealth    = false;
-    bool  drawDistance  = true;
-    bool  aimbot        = false;
-    bool  aimOnlyRMB    = true;
-    float aimSmooth     = 4.0f;
-    float aimFov        = 220.0f;
-    float headOffset    = 72.0f;
-    float widthRatio    = 0.42f;
-    float thickness     = 1.8f;
-    float maxDistance   = 2000.0f;
-    float healthMax     = 100.0f;
-    int   healthSide    = 0;
-    ImVec4 enemyColor   = ImVec4(1.00f, 0.25f, 0.25f, 1.00f);
-    ImVec4 mateColor    = ImVec4(0.25f, 0.85f, 1.00f, 1.00f);
+    bool  enabled      = true;
+    bool  teamCheck    = true;
+    bool  drawBox      = true;
+    bool  drawCorners  = false;
+    bool  drawHealth   = true;
+    bool  drawDistance = true;
+    bool  aimbot       = false;
+    bool  aimOnlyRMB   = true;
+    float aimSmooth    = 4.0f;
+    float aimFov       = 220.0f;
+    float headOffset   = 64.0f;   // matches typical view offset
+    float widthRatio   = 0.45f;
+    float thickness    = 1.8f;
+    float maxDistance  = 2000.0f;
+    float healthMax    = 100.0f;
+    int   healthSide   = 0;
+    ImVec4 enemyColor  = ImVec4(1.f, 0.25f, 0.25f, 1.f);
+    ImVec4 mateColor   = ImVec4(0.25f, 0.85f, 1.f, 1.f);
 } cfg;
 
-static HANDLE     g_hProc       = nullptr;
-static uintptr_t  g_gameBase    = 0;
-static DWORD      g_attachedPid = 0;
-static HWND       g_lastTarget  = nullptr;
-static Vec3       g_localPos    = {0, 0, 0};
-static bool       g_haveLocal   = false;
-static int        g_localTeam   = 0;
-static int        g_localHP     = 0;
-static char       g_status[160] = "Not attached";
-static int        g_dbgCount    = 0;
-static int        g_dbgDrawn    = 0;
-static bool       g_dbgVmOk     = false;
-
-static std::vector<uintptr_t>     g_rawObjects;
-static std::vector<TrackedEntity> g_tracked;
-static bool g_scanned = false;
-static const int kMaxLife = 8;
+static HANDLE    g_hProc = nullptr;
+static uintptr_t g_gameBase = 0;
+static DWORD     g_pid = 0;
+static HWND      g_lastTarget = nullptr;
+static Vec3      g_localPos{};
+static bool      g_haveLocal = false;
+static int       g_localTeam = 0;
+static char      g_status[160] = "Not attached";
+static int       g_count = 0, g_drawn = 0;
+static bool      g_matOk = false;
 
 template<typename T>
-static inline bool RPM(uintptr_t addr, T& out) {
-    SIZE_T read = 0;
-    return ReadProcessMemory(g_hProc, (LPCVOID)addr, &out, sizeof(T), &read) && read == sizeof(T);
+static bool RPM(uintptr_t a, T& o) {
+    SIZE_T n = 0;
+    return ReadProcessMemory(g_hProc, (LPCVOID)a, &o, sizeof(T), &n) && n == sizeof(T);
+}
+static bool ReadPtr32(uintptr_t a, uintptr_t& o) {
+    uint32_t t = 0;
+    if (!RPM(a, t) || t < 0x10000) return false;
+    o = t;
+    return true;
 }
 
-// 32-bit game → read pointer as uint32
-static inline bool ReadPtr32(uintptr_t addr, uintptr_t& out) {
-    uint32_t tmp = 0;
-    if (!RPM(addr, tmp)) return false;
-    out = (uintptr_t)tmp;
-    return out > 0x10000;
-}
-
-static uintptr_t GetModuleBase(DWORD pid, const wchar_t* mod) {
+static uintptr_t GetModuleBase(DWORD pid, const wchar_t* name) {
     HANDLE s = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
     if (s == INVALID_HANDLE_VALUE) return 0;
     MODULEENTRY32W me{ sizeof(me) };
     uintptr_t base = 0;
     if (Module32FirstW(s, &me)) {
         do {
-            if (_wcsicmp(me.szModule, mod) == 0) { base = (uintptr_t)me.modBaseAddr; break; }
+            if (_wcsicmp(me.szModule, name) == 0) { base = (uintptr_t)me.modBaseAddr; break; }
         } while (Module32NextW(s, &me));
     }
     CloseHandle(s);
@@ -188,284 +200,228 @@ static uintptr_t GetModuleBase(DWORD pid, const wchar_t* mod) {
 
 static void Detach() {
     if (g_hProc) { CloseHandle(g_hProc); g_hProc = nullptr; }
-    g_gameBase = 0; g_attachedPid = 0;
-    g_haveLocal = false; g_localTeam = 0; g_localHP = 0;
-    g_dbgCount = 0; g_dbgDrawn = 0; g_dbgVmOk = false;
-    g_rawObjects.clear();
-    g_tracked.clear();
-    g_scanned = false;
-    strcpy_s(g_status, g_lang == Lang::FA ? "متصل نیست" : "Not attached");
-}
-
-static void ScanVTableObjects() {
-    g_rawObjects.clear();
-    g_tracked.clear();
-    g_scanned = false;
-    if (!g_hProc || !g_gameBase) return;
-
-    const uint32_t targets[2] = {
-        (uint32_t)(g_gameBase + Off::VTABLE_1),
-        (uint32_t)(g_gameBase + Off::VTABLE_2)
-    };
-
-    const uintptr_t start = 0x10000000;
-    const uintptr_t end   = 0x40000000;
-    const size_t chunk = 0x100000;
-    std::vector<uint8_t> buf(chunk);
-
-    for (uintptr_t addr = start; addr < end; addr += chunk) {
-        SIZE_T bytesRead = 0;
-        if (!ReadProcessMemory(g_hProc, (LPCVOID)addr, buf.data(), chunk, &bytesRead) || bytesRead < 16)
-            continue;
-        for (size_t i = 0; i + 4 <= bytesRead; i += 4) {
-            uint32_t val = *reinterpret_cast<uint32_t*>(buf.data() + i);
-            if (val == targets[0] || val == targets[1])
-                g_rawObjects.push_back(addr + i);
-        }
-    }
-
-    g_tracked.reserve(g_rawObjects.size());
-    for (uintptr_t o : g_rawObjects) {
-        TrackedEntity te;
-        te.obj = o;
-        g_tracked.push_back(te);
-    }
-    g_scanned = true;
-    if (g_lang == Lang::FA)
-        sprintf_s(g_status, "متصل | بازیکن پیدا شده: %zu", g_rawObjects.size());
-    else
-        sprintf_s(g_status, "Attached | Players found: %zu", g_rawObjects.size());
+    g_gameBase = 0; g_pid = 0;
+    g_haveLocal = false; g_localTeam = 0;
+    g_count = g_drawn = 0; g_matOk = false;
+    strcpy_s(g_status, g_lang == Lang::FA ? FaFix("متصل نیست").c_str() : "Not attached");
 }
 
 static bool AttachFromUI() {
     Detach();
     if (!UI::IsWindowTargeted()) {
-        strcpy_s(g_status, g_lang == Lang::FA ? "پنجره هدف انتخاب نشده" : "No target window");
+        strcpy_s(g_status, g_lang == Lang::FA ? FaFix("پنجره هدف نیست").c_str() : "No target window");
         return false;
     }
     HWND hwnd = UI::GetTargetWindow();
     DWORD pid = UI::GetTargetPID();
     if (!pid && hwnd) GetWindowThreadProcessId(hwnd, &pid);
     if (!pid) {
-        strcpy_s(g_status, g_lang == Lang::FA ? "PID نامعتبر" : "Target PID invalid");
+        strcpy_s(g_status, "PID invalid");
         return false;
     }
-
     g_hProc = OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, FALSE, pid);
     if (!g_hProc) {
-        strcpy_s(g_status, g_lang == Lang::FA ? "خطا در OpenProcess (ادمین اجرا کن)" : "OpenProcess failed (run as admin)");
+        strcpy_s(g_status, g_lang == Lang::FA ? FaFix("خطا — ادمین اجرا کن").c_str() : "OpenProcess failed (admin)");
         return false;
     }
-
     g_gameBase = GetModuleBase(pid, L"clientmod_game.dll");
     if (!g_gameBase) {
-        strcpy_s(g_status, g_lang == Lang::FA ? "ماژول بازی هنوز لود نشده" : "Game module not loaded yet");
-        CloseHandle(g_hProc); g_hProc = nullptr; return false;
+        strcpy_s(g_status, g_lang == Lang::FA ? FaFix("ماژول لود نشده").c_str() : "clientmod_game.dll not loaded");
+        CloseHandle(g_hProc); g_hProc = nullptr;
+        return false;
     }
-    g_attachedPid = pid;
-    strcpy_s(g_status, g_lang == Lang::FA ? "در حال اسکن بازیکن‌ها..." : "Scanning players (wait)...");
-    ScanVTableObjects();
+    g_pid = pid;
+    sprintf_s(g_status, g_lang == Lang::FA ? "متصل" : "Attached");
     return true;
 }
 
-// -----------------------------------------------------------------
-// Local player: CE pointer chains FIRST, then direct float fallback
-// -----------------------------------------------------------------
 static void UpdateLocal() {
     g_haveLocal = false;
     g_localTeam = 0;
-    g_localHP = 0;
     if (!g_hProc || !g_gameBase) return;
 
-    // 1) Self Position via CE chain: [dll+MY_POS_PTR_RVA] -> ptr -> xyz
+    // CE pointer chain first
     uintptr_t posPtr = 0;
     if (ReadPtr32(g_gameBase + Off::MY_POS_PTR_RVA, posPtr)) {
-        Vec3 pos{};
-        if (RPM(posPtr + 0x0, pos.x) && RPM(posPtr + 0x4, pos.y) && RPM(posPtr + 0x8, pos.z)) {
-            if (fabsf(pos.x) > 0.5f || fabsf(pos.y) > 0.5f || fabsf(pos.z) > 0.5f) {
-                g_localPos = pos;
+        Vec3 p{};
+        if (RPM(posPtr, p.x) && RPM(posPtr + 4, p.y) && RPM(posPtr + 8, p.z)) {
+            if (fabsf(p.x) > 0.5f || fabsf(p.y) > 0.5f) {
+                g_localPos = p;
                 g_haveLocal = true;
             }
         }
     }
-
-    // Fallback: direct module floats
     if (!g_haveLocal) {
-        Vec3 pos{};
-        if (RPM(g_gameBase + Off::MY_POS_X, pos.x) &&
-            RPM(g_gameBase + Off::MY_POS_Y, pos.y) &&
-            RPM(g_gameBase + Off::MY_POS_Z, pos.z)) {
-            if (fabsf(pos.x) > 0.5f || fabsf(pos.y) > 0.5f || fabsf(pos.z) > 0.5f) {
-                g_localPos = pos;
+        Vec3 p{};
+        if (RPM(g_gameBase + Off::MY_POS_X, p.x) &&
+            RPM(g_gameBase + Off::MY_POS_Y, p.y) &&
+            RPM(g_gameBase + Off::MY_POS_Z, p.z)) {
+            if (fabsf(p.x) > 0.5f || fabsf(p.y) > 0.5f) {
+                g_localPos = p;
                 g_haveLocal = true;
             }
         }
     }
 
-    // 2) Self Team: [dll+MY_TEAM_PTR_RVA] -> ptr + 0x1D8
     uintptr_t teamBase = 0;
     if (ReadPtr32(g_gameBase + Off::MY_TEAM_PTR_RVA, teamBase)) {
-        int team = 0;
-        if (RPM(teamBase + Off::MY_TEAM_OFFSET, team))
-            g_localTeam = team;
-    }
-
-    // 3) HP chain: [dll+HP_PTR_RVA] -> p1 + 0x38 -> p2 + 0x48
-    uintptr_t hp1 = 0, hp2 = 0;
-    if (ReadPtr32(g_gameBase + Off::HP_PTR_RVA, hp1) &&
-        ReadPtr32(hp1 + Off::HP_OFFSET1, hp2)) {
-        int hp = 0;
-        if (RPM(hp2 + Off::HP_OFFSET2, hp))
-            g_localHP = hp;
+        int t = 0;
+        if (RPM(teamBase + Off::MY_TEAM_OFFSET, t))
+            g_localTeam = t;
     }
 }
 
-static bool WorldToScreen(const Vec3& pos, const float* mat, float sw, float sh, Vec2& out) {
-    float cx = mat[0] * pos.x + mat[1] * pos.y + mat[2] * pos.z + mat[3];
-    float cy = mat[4] * pos.x + mat[5] * pos.y + mat[6] * pos.z + mat[7];
-    float cw = mat[12] * pos.x + mat[13] * pos.y + mat[14] * pos.z + mat[15];
-    if (fabsf(cw) < 0.001f || cw < 0.15f) return false;
-    float ndc_x = cx / cw;
-    float ndc_y = cy / cw;
-    out.x = (sw * 0.5f) * (1.0f + ndc_x);
-    out.y = (sh * 0.5f) * (1.0f - ndc_y);
+static bool WorldToScreen(const Vec3& pos, const float* m, float sw, float sh, Vec2& out) {
+    // row layout matching working dumps
+    float cx = m[0]*pos.x + m[1]*pos.y + m[2]*pos.z + m[3];
+    float cy = m[4]*pos.x + m[5]*pos.y + m[6]*pos.z + m[7];
+    float cw = m[12]*pos.x + m[13]*pos.y + m[14]*pos.z + m[15];
+    if (fabsf(cw) < 0.001f || cw < 0.1f) return false;
+    float ndx = cx / cw, ndy = cy / cw;
+    out.x = sw * 0.5f * (1.f + ndx);
+    out.y = sh * 0.5f * (1.f - ndy);
     return true;
 }
 
-static inline ImU32 C(ImVec4 v) { return ImGui::ColorConvertFloat4ToU32(v); }
+static bool ReadMatrix(float* out16) {
+    // try several known matrix RVAs
+    const uintptr_t cands[] = {
+        Off::VIEW_MATRIX,
+        Off::WORLD_TO_SCREEN,
+        Off::MATRIX_BUFFER,
+        Off::VIEW_MATRIX_ALT,
+        0x27603D0, // previous working
+    };
+    for (uintptr_t rva : cands) {
+        float m[16]{};
+        uintptr_t addr = g_gameBase + rva;
+        // some are pointers to matrix
+        uintptr_t maybePtr = 0;
+        if (ReadPtr32(addr, maybePtr) && maybePtr > 0x10000) {
+            if (RPM(maybePtr, m)) {
+                if (fabsf(m[15] - 1.f) < 0.5f || fabsf(m[0]) > 0.01f) {
+                    memcpy(out16, m, 64);
+                    return true;
+                }
+            }
+        }
+        if (RPM(addr, m)) {
+            if (fabsf(m[15] - 1.f) < 0.5f || fabsf(m[0]) > 0.01f) {
+                memcpy(out16, m, 64);
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+static inline ImU32 Col(ImVec4 v) { return ImGui::ColorConvertFloat4ToU32(v); }
 
 static void DrawCorners(ImDrawList* dl, float x, float y, float w, float h, ImU32 c, float t) {
-    float l = (w < h ? w : h) * 0.28f; if (l < 4.0f) l = 4.0f;
-    dl->AddLine(ImVec2(x, y), ImVec2(x + l, y), c, t);
-    dl->AddLine(ImVec2(x, y), ImVec2(x, y + l), c, t);
-    dl->AddLine(ImVec2(x + w, y), ImVec2(x + w - l, y), c, t);
-    dl->AddLine(ImVec2(x + w, y), ImVec2(x + w, y + l), c, t);
-    dl->AddLine(ImVec2(x, y + h), ImVec2(x + l, y + h), c, t);
-    dl->AddLine(ImVec2(x, y + h), ImVec2(x, y + h - l), c, t);
-    dl->AddLine(ImVec2(x + w, y + h), ImVec2(x + w - l, y + h), c, t);
-    dl->AddLine(ImVec2(x + w, y + h), ImVec2(x + w, y + h - l), c, t);
+    float l = (w < h ? w : h) * 0.28f; if (l < 4.f) l = 4.f;
+    dl->AddLine(ImVec2(x,y), ImVec2(x+l,y), c, t);
+    dl->AddLine(ImVec2(x,y), ImVec2(x,y+l), c, t);
+    dl->AddLine(ImVec2(x+w,y), ImVec2(x+w-l,y), c, t);
+    dl->AddLine(ImVec2(x+w,y), ImVec2(x+w,y+l), c, t);
+    dl->AddLine(ImVec2(x,y+h), ImVec2(x+l,y+h), c, t);
+    dl->AddLine(ImVec2(x,y+h), ImVec2(x,y+h-l), c, t);
+    dl->AddLine(ImVec2(x+w,y+h), ImVec2(x+w-l,y+h), c, t);
+    dl->AddLine(ImVec2(x+w,y+h), ImVec2(x+w,y+h-l), c, t);
 }
 
 static void DrawHealthBar(ImDrawList* dl, float bx, float by, float w, float h, float frac, int side) {
-    if (frac < 0.0f) frac = 0.0f; if (frac > 1.0f) frac = 1.0f;
-    ImU32 hc = frac > 0.6f ? IM_COL32(60, 220, 60, 255) : frac > 0.3f ? IM_COL32(240, 220, 40, 255) : IM_COL32(240, 60, 60, 255);
-    ImU32 bg = IM_COL32(0, 0, 0, 180);
-    if (side == 0 || side == 1) {
-        float bw = 3.5f, gap = 4.0f;
-        float bxx = (side == 0) ? (bx - bw - gap) : (bx + w + gap);
-        dl->AddRectFilled(ImVec2(bxx, by), ImVec2(bxx + bw, by + h), bg);
+    frac = frac < 0 ? 0 : (frac > 1 ? 1 : frac);
+    ImU32 hc = frac > 0.6f ? IM_COL32(60,220,60,255) : frac > 0.3f ? IM_COL32(240,220,40,255) : IM_COL32(240,60,60,255);
+    ImU32 bg = IM_COL32(0,0,0,180);
+    if (side <= 1) {
+        float bw = 3.5f, gap = 4.f;
+        float bx2 = side == 0 ? bx - bw - gap : bx + w + gap;
+        dl->AddRectFilled(ImVec2(bx2, by), ImVec2(bx2 + bw, by + h), bg);
         float fill = h * frac;
-        dl->AddRectFilled(ImVec2(bxx, by + h - fill), ImVec2(bxx + bw, by + h), hc);
+        dl->AddRectFilled(ImVec2(bx2, by + h - fill), ImVec2(bx2 + bw, by + h), hc);
     } else {
-        float bh = 3.5f, gap = 4.0f;
-        float byy = (side == 2) ? (by - bh - gap) : (by + h + gap);
-        dl->AddRectFilled(ImVec2(bx, byy), ImVec2(bx + w, byy + bh), bg);
-        float fill = w * frac;
-        dl->AddRectFilled(ImVec2(bx, byy), ImVec2(bx + fill, byy + bh), hc);
+        float bh = 3.5f, gap = 4.f;
+        float by2 = side == 2 ? by - bh - gap : by + h + gap;
+        dl->AddRectFilled(ImVec2(bx, by2), ImVec2(bx + w, by2 + bh), bg);
+        dl->AddRectFilled(ImVec2(bx, by2), ImVec2(bx + w * frac, by2 + bh), hc);
     }
-}
-
-static inline ImVec2 RotatePoint(float x, float y, float s, float c) {
-    return ImVec2(x * c - y * s, x * s + y * c);
-}
-static int g_RotateStartIdx = -1;
-static void ImRotateStart(ImDrawList* dl) { g_RotateStartIdx = dl->VtxBuffer.Size; }
-static void ImRotateEnd(ImDrawList* dl, float rad, ImVec2 center) {
-    float s = sinf(rad), c = cosf(rad);
-    for (int i = g_RotateStartIdx; i < dl->VtxBuffer.Size; i++) {
-        ImDrawVert& v = dl->VtxBuffer.Data[i];
-        float px = v.pos.x - center.x;
-        float py = v.pos.y - center.y;
-        ImVec2 r = RotatePoint(px, py, s, c);
-        v.pos.x = r.x + center.x;
-        v.pos.y = r.y + center.y;
-    }
-}
-static void DrawRotatingLogo() {
-    ImDrawList* dl = ImGui::GetBackgroundDrawList();
-    if (!dl) return;
-    const float posX = 28.0f, posY = 28.0f, radius = 22.0f;
-    const float angle = (float)ImGui::GetTime() * 2.1f;
-    dl->AddCircleFilled(ImVec2(posX, posY), radius + 4.0f, IM_COL32(0, 0, 0, 120), 32);
-    dl->AddCircle(ImVec2(posX, posY), radius + 2.0f, IM_COL32(60, 180, 255, 180), 32, 1.5f);
-    for (int i = 0; i < 48; ++i) {
-        float a0 = angle + (float)i / 48 * 2.0f * (float)M_PI;
-        float a1 = angle + (float)(i + 1) / 48 * 2.0f * (float)M_PI;
-        float alpha = 80.0f + 120.0f * (0.5f + 0.5f * sinf(a0 * 2.0f));
-        dl->AddLine(ImVec2(posX + cosf(a0) * radius, posY + sinf(a0) * radius),
-                    ImVec2(posX + cosf(a1) * radius, posY + sinf(a1) * radius),
-                    IM_COL32(80, 200, 255, (int)alpha), 2.0f);
-    }
-    const char* text = "F ESP";
-    ImFont* font = ImGui::GetFont();
-    const float fontSize = 14.0f;
-    ImRotateStart(dl);
-    ImVec2 textSize = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, text);
-    ImVec2 textPos(posX - textSize.x * 0.5f, posY - textSize.y * 0.5f);
-    dl->AddText(font, fontSize, ImVec2(textPos.x + 1, textPos.y + 1), IM_COL32(0, 0, 0, 200), text);
-    dl->AddText(font, fontSize, textPos, IM_COL32(100, 220, 255, 255), text);
-    ImRotateEnd(dl, angle, ImVec2(posX, posY));
 }
 
 static void MoveMouseRel(int dx, int dy) {
-    if (dx == 0 && dy == 0) return;
+    if (!dx && !dy) return;
     INPUT in{};
     in.type = INPUT_MOUSE;
-    in.mi.dx = dx;
-    in.mi.dy = dy;
+    in.mi.dx = dx; in.mi.dy = dy;
     in.mi.dwFlags = MOUSEEVENTF_MOVE;
     SendInput(1, &in, sizeof(INPUT));
 }
 
-static void RunAimAssist(float targetX, float targetY, float sw, float sh) {
+static void RunAim(float tx, float ty, float sw, float sh) {
     if (!cfg.aimbot) return;
-    if (cfg.aimOnlyRMB && !(GetAsyncKeyState(VK_RBUTTON) & 0x8000))
-        return;
-
-    float cx = sw * 0.5f;
-    float cy = sh * 0.5f;
-    float dx = targetX - cx;
-    float dy = targetY - cy;
-    float dist = sqrtf(dx * dx + dy * dy);
-
-    if (dist < 1.5f) return;
-    if (dist > cfg.aimFov) return;
-
-    float smooth = cfg.aimSmooth < 1.0f ? 1.0f : cfg.aimSmooth;
-    float stepX = dx / smooth;
-    float stepY = dy / smooth;
-
-    const float maxStep = 40.0f;
-    if (stepX >  maxStep) stepX =  maxStep;
-    if (stepX < -maxStep) stepX = -maxStep;
-    if (stepY >  maxStep) stepY =  maxStep;
-    if (stepY < -maxStep) stepY = -maxStep;
-
-    int mx = (int)(stepX >= 0 ? stepX + 0.5f : stepX - 0.5f);
-    int my = (int)(stepY >= 0 ? stepY + 0.5f : stepY - 0.5f);
-
-    if (mx == 0 && fabsf(dx) > 2.0f) mx = (dx > 0) ? 1 : -1;
-    if (my == 0 && fabsf(dy) > 2.0f) my = (dy > 0) ? 1 : -1;
-
+    if (cfg.aimOnlyRMB && !(GetAsyncKeyState(VK_RBUTTON) & 0x8000)) return;
+    float dx = tx - sw * 0.5f, dy = ty - sh * 0.5f;
+    float d = sqrtf(dx*dx + dy*dy);
+    if (d < 1.5f || d > cfg.aimFov) return;
+    float s = cfg.aimSmooth < 1.f ? 1.f : cfg.aimSmooth;
+    float sx = dx / s, sy = dy / s;
+    if (sx > 40) sx = 40; if (sx < -40) sx = -40;
+    if (sy > 40) sy = 40; if (sy < -40) sy = -40;
+    int mx = (int)(sx >= 0 ? sx + 0.5f : sx - 0.5f);
+    int my = (int)(sy >= 0 ? sy + 0.5f : sy - 0.5f);
+    if (!mx && fabsf(dx) > 2) mx = dx > 0 ? 1 : -1;
+    if (!my && fabsf(dy) > 2) my = dy > 0 ? 1 : -1;
     MoveMouseRel(mx, my);
 }
 
+// rotating logo (same as before)
+static int g_rotIdx = -1;
+static void RotStart(ImDrawList* dl) { g_rotIdx = dl->VtxBuffer.Size; }
+static void RotEnd(ImDrawList* dl, float rad, ImVec2 c) {
+    float s = sinf(rad), co = cosf(rad);
+    for (int i = g_rotIdx; i < dl->VtxBuffer.Size; i++) {
+        auto& v = dl->VtxBuffer.Data[i];
+        float px = v.pos.x - c.x, py = v.pos.y - c.y;
+        v.pos.x = px * co - py * s + c.x;
+        v.pos.y = px * s + py * co + c.y;
+    }
+}
+static void DrawLogo() {
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    if (!dl) return;
+    float px = 28, py = 28, r = 22;
+    float a = (float)ImGui::GetTime() * 2.1f;
+    dl->AddCircleFilled(ImVec2(px, py), r + 4, IM_COL32(0,0,0,120), 32);
+    dl->AddCircle(ImVec2(px, py), r + 2, IM_COL32(60,180,255,180), 32, 1.5f);
+    for (int i = 0; i < 48; i++) {
+        float a0 = a + i / 48.f * 2.f * (float)M_PI;
+        float a1 = a + (i + 1) / 48.f * 2.f * (float)M_PI;
+        float al = 80 + 120 * (0.5f + 0.5f * sinf(a0 * 2));
+        dl->AddLine(ImVec2(px + cosf(a0)*r, py + sinf(a0)*r),
+                    ImVec2(px + cosf(a1)*r, py + sinf(a1)*r),
+                    IM_COL32(80,200,255,(int)al), 2.f);
+    }
+    const char* t = "F ESP";
+    ImFont* f = ImGui::GetFont();
+    RotStart(dl);
+    ImVec2 ts = f->CalcTextSizeA(14.f, FLT_MAX, 0, t);
+    ImVec2 tp(px - ts.x * 0.5f, py - ts.y * 0.5f);
+    dl->AddText(f, 14.f, ImVec2(tp.x+1, tp.y+1), IM_COL32(0,0,0,200), t);
+    dl->AddText(f, 14.f, tp, IM_COL32(100,220,255,255), t);
+    RotEnd(dl, a, ImVec2(px, py));
+}
+
+// ===================== MENU =====================
 void RenderESPMenu() {
     if (!UI::IsWindowTargeted()) return;
 
     ImGui::SetNextWindowSize(ImVec2(360, 440), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSizeConstraints(ImVec2(320, 280), ImVec2(500, 700));
-
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysVerticalScrollbar;
-    if (!ImGui::Begin(L_Title(), nullptr, flags))
-    {
-        ImGui::End();
-        return;
+    ImGui::SetNextWindowSizeConstraints(ImVec2(320, 280), ImVec2(520, 720));
+    if (!ImGui::Begin(L_Title(), nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysVerticalScrollbar)) {
+        ImGui::End(); return;
     }
 
-    ImGui::TextColored(ImVec4(0.40f, 0.85f, 1.00f, 1.00f), "%s", L_Title());
-    ImGui::SameLine();
-    ImGui::TextDisabled("v2.5");
+    ImGui::TextColored(ImVec4(0.4f, 0.85f, 1.f, 1.f), "%s", L_Title());
+    ImGui::SameLine(); ImGui::TextDisabled("v3.0");
     ImGui::Separator();
 
     ImGui::Text("%s", L_Language());
@@ -477,107 +433,80 @@ void RenderESPMenu() {
     ImGui::Checkbox(L_EnableESP(), &cfg.enabled);
     ImGui::SameLine();
     if (ImGui::Button(L_Reattach())) AttachFromUI();
-    ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "%s", g_status);
+    ImGui::TextColored(ImVec4(0.5f, 1.f, 0.5f, 1.f), "%s", g_status);
     ImGui::Separator();
 
-    if (ImGui::BeginTabBar("EspTabs", ImGuiTabBarFlags_FittingPolicyScroll | ImGuiTabBarFlags_Reorderable))
-    {
-        if (ImGui::BeginTabItem(L_TabMain()))
-        {
+    if (ImGui::BeginTabBar("tabs", ImGuiTabBarFlags_FittingPolicyScroll)) {
+        if (ImGui::BeginTabItem(L_TabMain())) {
             ImGui::Checkbox(L_TeamCheck(), &cfg.teamCheck);
-            if (g_localTeam != 0)
-                ImGui::TextDisabled("%s: %d", g_lang == Lang::FA ? "تیم خودی" : "My team", g_localTeam);
-            ImGui::SliderFloat(L_MaxDist(), &cfg.maxDistance, 50.0f, 4000.0f, "%.0f m");
-            ImGui::TextDisabled(g_lang == Lang::FA
-                ? "باکس‌های دورتر از این مقدار کشیده نمی‌شوند"
-                : "Boxes farther than this are not drawn");
+            if (g_localTeam) ImGui::TextDisabled("Team: %d", g_localTeam);
+            ImGui::SliderFloat(L_MaxDist(), &cfg.maxDistance, 50.f, 4000.f, "%.0f");
             ImGui::EndTabItem();
         }
-
-        if (ImGui::BeginTabItem(L_TabVisuals()))
-        {
-            ImGui::Checkbox(L_Box(), &cfg.drawBox);
-            ImGui::SameLine();
+        if (ImGui::BeginTabItem(L_TabVisuals())) {
+            ImGui::Checkbox(L_Box(), &cfg.drawBox); ImGui::SameLine();
             ImGui::Checkbox(L_Corners(), &cfg.drawCorners);
-            ImGui::Checkbox(L_HealthBar(), &cfg.drawHealth);
-            ImGui::SameLine();
+            ImGui::Checkbox(L_HealthBar(), &cfg.drawHealth); ImGui::SameLine();
             ImGui::Checkbox(L_Distance(), &cfg.drawDistance);
-
             ImGui::Separator();
-            ImGui::SliderFloat(L_Thickness(), &cfg.thickness, 0.5f, 6.0f, "%.1f");
-            ImGui::SliderFloat(L_BoxHeight(), &cfg.headOffset, 30.0f, 140.0f, "%.0f");
-            ImGui::SliderFloat(L_WidthRatio(), &cfg.widthRatio, 0.15f, 0.90f, "%.2f");
-
-            ImGui::Separator();
-            ImGui::SliderFloat(L_MaxHP(), &cfg.healthMax, 50.0f, 500.0f, "%.0f");
-            const char* sides_en = "Left\0Right\0Top\0Bottom\0";
-            const char* sides_fa = "چپ\0راست\0بالا\0پایین\0";
-            ImGui::Combo(L_Side(), &cfg.healthSide, g_lang == Lang::FA ? sides_fa : sides_en);
+            ImGui::SliderFloat(L_Thickness(), &cfg.thickness, 0.5f, 6.f, "%.1f");
+            ImGui::SliderFloat(L_BoxHeight(), &cfg.headOffset, 30.f, 120.f, "%.0f");
+            ImGui::SliderFloat(L_WidthRatio(), &cfg.widthRatio, 0.15f, 0.9f, "%.2f");
+            ImGui::SliderFloat(L_MaxHP(), &cfg.healthMax, 50.f, 200.f, "%.0f");
+            const char* sides = g_lang == Lang::FA ? "چپ\0راست\0بالا\0پایین\0" : "Left\0Right\0Top\0Bottom\0";
+            // FA combo items also need reverse — keep simple EN for combo values
+            ImGui::Combo(L_Side(), &cfg.healthSide, "Left\0Right\0Top\0Bottom\0");
             ImGui::EndTabItem();
         }
-
-        if (ImGui::BeginTabItem(L_TabAimbot()))
-        {
+        if (ImGui::BeginTabItem(L_TabAim())) {
             ImGui::Checkbox(L_AimEnable(), &cfg.aimbot);
-            ImGui::Checkbox(g_lang == Lang::FA ? "فقط با RMB" : "Only while RMB held", &cfg.aimOnlyRMB);
-            ImGui::SliderFloat(L_AimSmooth(), &cfg.aimSmooth, 1.0f, 15.0f, "%.1f");
-            ImGui::SliderFloat(L_AimFov(), &cfg.aimFov, 40.0f, 600.0f, "%.0f");
-            ImGui::TextDisabled("%s", L_AimHint());
+            ImGui::Checkbox(L_AimRMB(), &cfg.aimOnlyRMB);
+            ImGui::SliderFloat(L_AimSmooth(), &cfg.aimSmooth, 1.f, 15.f, "%.1f");
+            ImGui::SliderFloat(L_AimFov(), &cfg.aimFov, 40.f, 600.f, "%.0f");
             ImGui::EndTabItem();
         }
-
-        if (ImGui::BeginTabItem(L_TabColors()))
-        {
+        if (ImGui::BeginTabItem(L_TabColors())) {
             ImGui::ColorEdit4(L_Enemy(), (float*)&cfg.enemyColor);
             ImGui::ColorEdit4(L_Mate(), (float*)&cfg.mateColor);
             ImGui::EndTabItem();
         }
-
-        if (ImGui::BeginTabItem(L_TabDebug()))
-        {
+        if (ImGui::BeginTabItem(L_TabStatus())) {
             ImGui::Text("%s : %s", L_Connected(), g_hProc ? L_Yes() : L_No());
-            ImGui::Text("%s : %s", L_LocalPlayer(), g_haveLocal ? L_Found() : L_NotFound());
-            ImGui::Text("%s : %s", L_Camera(), g_dbgVmOk ? L_OK() : L_Failed());
-            ImGui::Text("%s : %d", L_Players(), g_dbgCount);
-            ImGui::Text("%s : %d", L_BoxesDrawn(), g_dbgDrawn);
-            if (g_localTeam != 0)
-                ImGui::Text("Team : %d", g_localTeam);
-            if (g_localHP > 0)
-                ImGui::Text("HP   : %d", g_localHP);
+            ImGui::Text("%s : %s", L_LocalP(), g_haveLocal ? L_Found() : L_NotFound());
+            ImGui::Text("%s : %s", L_Camera(), g_matOk ? L_OK() : L_Fail());
+            ImGui::Text("%s : %d", L_Players(), g_count);
+            ImGui::Text("%s : %d", L_Drawn(), g_drawn);
             ImGui::EndTabItem();
         }
-
-        if (ImGui::BeginTabItem(L_TabContact()))
-        {
+        if (ImGui::BeginTabItem(L_TabContact())) {
             ImGui::Text("%s", L_Telegram());
             ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.30f, 0.70f, 1.00f, 1.00f), "@client_v34");
+            ImGui::TextColored(ImVec4(0.3f, 0.7f, 1.f, 1.f), "@client_v34");
             if (ImGui::Button(L_OpenTG(), ImVec2(-1, 0)))
                 ShellExecuteA(nullptr, "open", "https://t.me/client_v34", nullptr, nullptr, SW_SHOWNORMAL);
             if (ImGui::Button(L_CopyTG(), ImVec2(-1, 0))) {
                 if (OpenClipboard(nullptr)) {
                     EmptyClipboard();
-                    const char* text = "@client_v34";
-                    HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, strlen(text) + 1);
-                    if (hMem) {
-                        memcpy(GlobalLock(hMem), text, strlen(text) + 1);
-                        GlobalUnlock(hMem);
-                        SetClipboardData(CF_TEXT, hMem);
+                    const char* t = "@client_v34";
+                    HGLOBAL h = GlobalAlloc(GMEM_MOVEABLE, strlen(t) + 1);
+                    if (h) {
+                        memcpy(GlobalLock(h), t, strlen(t) + 1);
+                        GlobalUnlock(h);
+                        SetClipboardData(CF_TEXT, h);
                     }
                     CloseClipboard();
                 }
             }
             ImGui::EndTabItem();
         }
-
         ImGui::EndTabBar();
     }
-
     ImGui::End();
 }
 
+// ===================== DRAW =====================
 void RenderESPBoxes() {
-    if (UI::IsWindowTargeted()) DrawRotatingLogo();
+    if (UI::IsWindowTargeted()) DrawLogo();
 
     if (UI::GetTargetWindow() != g_lastTarget) {
         g_lastTarget = UI::GetTargetWindow();
@@ -588,140 +517,142 @@ void RenderESPBoxes() {
 
     UpdateLocal();
     if (!cfg.enabled) return;
-    if (!g_scanned) return;
 
     ImGuiIO& io = ImGui::GetIO();
-    const float sw = io.DisplaySize.x;
-    const float sh = io.DisplaySize.y;
+    const float sw = io.DisplaySize.x, sh = io.DisplaySize.y;
     ImDrawList* dl = ImGui::GetBackgroundDrawList();
     if (!dl) return;
 
-    float mat[16] = {};
-    g_dbgVmOk = RPM(g_gameBase + Off::MATRIX_RVA, mat);
-    if (!g_dbgVmOk) {
-        dl->AddText(ImVec2(20, 70), IM_COL32(255, 80, 80, 255),
-            g_lang == Lang::FA ? "خواندن دوربین ناموفق" : "Camera read failed");
+    float mat[16]{};
+    g_matOk = ReadMatrix(mat);
+    if (!g_matOk) {
+        dl->AddText(ImVec2(20, 70), IM_COL32(255,80,80,255), "Matrix fail");
         return;
     }
 
-    const float maxDist     = cfg.maxDistance;
-    const float boxHeightZ  = cfg.headOffset;
-    const float widthRatio  = cfg.widthRatio;
-    const float thickness   = cfg.thickness;
-    const bool  doBox       = cfg.drawBox;
-    const bool  doCorners   = cfg.drawCorners;
-    const bool  doHealth    = cfg.drawHealth;
-    const bool  doDistText  = cfg.drawDistance;
+    g_count = g_drawn = 0;
+    float bestD = 1e9f, bestX = 0, bestY = 0;
+    bool hasAim = false;
 
-    g_dbgDrawn = 0;
-    g_dbgCount = 0;
+    // ---- Entity array path ----
+    // ENTITY_ARRAY may be a pointer to first element or the array base itself
+    uintptr_t arrayBase = 0;
+    if (!ReadPtr32(g_gameBase + Off::ENTITY_ARRAY, arrayBase))
+        arrayBase = g_gameBase + Off::ENTITY_ARRAY;
 
-    float bestAimDist = 1e9f;
-    float bestAimX = 0, bestAimY = 0;
-    bool  hasAimTarget = false;
+    int maxEnt = 64;
+    int cnt = 0;
+    if (RPM(g_gameBase + Off::ENTITY_COUNT, cnt) && cnt > 0 && cnt < 256)
+        maxEnt = cnt;
 
-    for (auto& te : g_tracked) {
+    for (int i = 0; i < maxEnt; ++i) {
+        uintptr_t slot = arrayBase + (uintptr_t)i * Off::ENTITY_STRIDE;
+
+        // slot may be entity ptr or embedded entity
+        uintptr_t ent = 0;
+        if (!ReadPtr32(slot, ent) || ent < 0x10000)
+            ent = slot; // try as embedded
+
+        // dormant
+        uint8_t dormant = 0;
+        RPM(ent + Off::m_bDormant, dormant);
+        if (dormant) continue;
+
+        // alive
+        uint8_t life = 0;
+        RPM(ent + Off::m_lifeState, life);
+        if (life != 0) continue;
+
+        int hp = 0;
+        RPM(ent + Off::m_iHealth, hp);
+        if (hp <= 0 || hp > 500) continue;
+
+        int team = 0;
+        RPM(ent + Off::m_iTeamNum, team);
+
+        // origin — prefer abs, fallback origin
         Vec3 origin{};
-        bool ok = RPM(te.obj + Off::V_OBJ_ORIGIN, origin.x) &&
-                  RPM(te.obj + Off::V_OBJ_ORIGIN + 4, origin.y) &&
-                  RPM(te.obj + Off::V_OBJ_ORIGIN + 8, origin.z);
+        bool gotPos = RPM(ent + Off::m_vecAbsOrigin, origin.x) &&
+                      RPM(ent + Off::m_vecAbsOrigin + 4, origin.y) &&
+                      RPM(ent + Off::m_vecAbsOrigin + 8, origin.z);
+        if (!gotPos || (fabsf(origin.x) < 0.1f && fabsf(origin.y) < 0.1f)) {
+            gotPos = RPM(ent + Off::m_vecOrigin, origin.x) &&
+                     RPM(ent + Off::m_vecOrigin + 4, origin.y) &&
+                     RPM(ent + Off::m_vecOrigin + 8, origin.z);
+        }
+        if (!gotPos) continue;
+        if (fabsf(origin.x) > 50000.f || fabsf(origin.y) > 50000.f) continue;
 
-        if (ok) {
-            if (fabsf(origin.x) > 30000.0f || fabsf(origin.y) > 30000.0f || fabsf(origin.z) > 30000.0f)
-                ok = false;
-            if (fabsf(origin.x) < 0.05f && fabsf(origin.y) < 0.05f)
-                ok = false;
+        float dist = -1.f;
+        if (g_haveLocal) {
+            float dx = origin.x - g_localPos.x;
+            float dy = origin.y - g_localPos.y;
+            float dz = origin.z - g_localPos.z;
+            dist = sqrtf(dx*dx + dy*dy + dz*dz);
+            if (dist < 10.f) continue;           // self
+            if (dist > cfg.maxDistance) continue;
         }
 
-        if (ok) {
-            te.pos = origin;
-            te.life = kMaxLife;
-            te.valid = true;
-            int hp = 0, team = 0;
-            RPM(te.obj + Off::OBJ_HP_OFF, hp);
-            RPM(te.obj + Off::OBJ_TEAM_OFF, team);
-            te.hp = hp;
-            te.team = team;
-        } else {
-            if (te.life > 0) te.life--;
-            if (te.life <= 0) te.valid = false;
-        }
-
-        if (!te.valid) continue;
-
-        // Team check using CE-verified local team
-        if (cfg.teamCheck && g_localTeam != 0 && te.team == g_localTeam)
+        if (cfg.teamCheck && g_localTeam != 0 && team == g_localTeam)
             continue;
 
-        float dist = -1.0f;
-        if (g_haveLocal) {
-            float dx = te.pos.x - g_localPos.x;
-            float dy = te.pos.y - g_localPos.y;
-            float dz = te.pos.z - g_localPos.z;
-            dist = sqrtf(dx * dx + dy * dy + dz * dz);
-            if (dist < 15.0f) continue;
-            if (dist > maxDist) continue;
-        }
+        ++g_count;
 
-        ++g_dbgCount;
+        // head height from view offset if available
+        float headZ = cfg.headOffset;
+        float vo = 0.f;
+        if (RPM(ent + Off::m_vecViewOffset + 8, vo) && vo > 20.f && vo < 100.f)
+            headZ = vo;
 
-        Vec3 head = te.pos;
-        head.z += boxHeightZ;
+        Vec3 head = origin;
+        head.z += headZ;
 
-        Vec2 feetScr{}, headScr{};
-        if (!WorldToScreen(te.pos, mat, sw, sh, feetScr)) continue;
-        if (!WorldToScreen(head, mat, sw, sh, headScr)) continue;
+        Vec2 feet{}, headS{};
+        if (!WorldToScreen(origin, mat, sw, sh, feet)) continue;
+        if (!WorldToScreen(head, mat, sw, sh, headS)) continue;
 
-        float h = feetScr.y - headScr.y;
-        if (h < 6.0f || h > 2000.0f) continue;
+        float h = feet.y - headS.y;
+        if (h < 6.f || h > 2000.f) continue;
+        float w = h * cfg.widthRatio;
+        if (w < 2.f) w = 2.f;
+        float bx = headS.x - w * 0.5f;
+        float by = headS.y;
 
-        float w = h * widthRatio;
-        if (w < 2.0f) w = 2.0f;
+        ImU32 col = (g_localTeam && team == g_localTeam) ? Col(cfg.mateColor) : Col(cfg.enemyColor);
 
-        float bx = headScr.x - w * 0.5f;
-        float by = headScr.y;
-
-        float aimX = headScr.x;
-        float aimY = headScr.y + h * 0.25f;
-
-        ImU32 col = (cfg.teamCheck && g_localTeam != 0 && te.team == g_localTeam)
-            ? C(cfg.mateColor) : C(cfg.enemyColor);
-
-        if (doBox)
-            dl->AddRect(ImVec2(bx, by), ImVec2(bx + w, by + h), col, 0.0f, 0, thickness);
-        if (doCorners)
-            DrawCorners(dl, bx, by, w, h, col, thickness + 0.5f);
-        if (doHealth && te.hp > 0)
-            DrawHealthBar(dl, bx, by, w, h, (float)te.hp / cfg.healthMax, cfg.healthSide);
-        if (doDistText && dist >= 0.0f) {
-            char buf[32];
+        if (cfg.drawBox)
+            dl->AddRect(ImVec2(bx, by), ImVec2(bx + w, by + h), col, 0.f, 0, cfg.thickness);
+        if (cfg.drawCorners)
+            DrawCorners(dl, bx, by, w, h, col, cfg.thickness + 0.5f);
+        if (cfg.drawHealth)
+            DrawHealthBar(dl, bx, by, w, h, (float)hp / cfg.healthMax, cfg.healthSide);
+        if (cfg.drawDistance && dist >= 0.f) {
+            char buf[24];
             sprintf_s(buf, "%.0fm", dist);
             ImVec2 ts = ImGui::CalcTextSize(buf);
-            dl->AddText(ImVec2(bx + w * 0.5f - ts.x * 0.5f, by + h + 2.0f), IM_COL32(255, 255, 255, 230), buf);
+            dl->AddText(ImVec2(bx + w * 0.5f - ts.x * 0.5f, by + h + 2), IM_COL32(255,255,255,230), buf);
         }
 
-        ++g_dbgDrawn;
+        ++g_drawn;
 
         if (cfg.aimbot) {
-            float adx = aimX - sw * 0.5f;
-            float ady = aimY - sh * 0.5f;
-            float ad = sqrtf(adx * adx + ady * ady);
-            if (ad < bestAimDist && ad <= cfg.aimFov) {
-                bestAimDist = ad;
-                bestAimX = aimX;
-                bestAimY = aimY;
-                hasAimTarget = true;
+            float ax = headS.x;
+            float ay = headS.y + h * 0.25f;
+            float adx = ax - sw * 0.5f, ady = ay - sh * 0.5f;
+            float ad = sqrtf(adx*adx + ady*ady);
+            if (ad < bestD && ad <= cfg.aimFov) {
+                bestD = ad; bestX = ax; bestY = ay; hasAim = true;
             }
         }
     }
 
     if (cfg.aimbot)
-        dl->AddCircle(ImVec2(sw * 0.5f, sh * 0.5f), cfg.aimFov, IM_COL32(255, 255, 255, 40), 64, 1.0f);
+        dl->AddCircle(ImVec2(sw * 0.5f, sh * 0.5f), cfg.aimFov, IM_COL32(255,255,255,35), 64, 1.f);
 
-    if (hasAimTarget) {
-        dl->AddLine(ImVec2(bestAimX - 8, bestAimY), ImVec2(bestAimX + 8, bestAimY), IM_COL32(0, 255, 0, 220), 1.5f);
-        dl->AddLine(ImVec2(bestAimX, bestAimY - 8), ImVec2(bestAimX, bestAimY + 8), IM_COL32(0, 255, 0, 220), 1.5f);
-        RunAimAssist(bestAimX, bestAimY, sw, sh);
+    if (hasAim) {
+        dl->AddLine(ImVec2(bestX - 8, bestY), ImVec2(bestX + 8, bestY), IM_COL32(0,255,0,220), 1.5f);
+        dl->AddLine(ImVec2(bestX, bestY - 8), ImVec2(bestX, bestY + 8), IM_COL32(0,255,0,220), 1.5f);
+        RunAim(bestX, bestY, sw, sh);
     }
 }
 
