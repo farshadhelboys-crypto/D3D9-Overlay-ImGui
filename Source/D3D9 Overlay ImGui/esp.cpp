@@ -1,6 +1,6 @@
 // =====================================================================
-//  ESP - VTable only + anti-blink + aim assist + full EN/FA
-//  v2.4 - distance / box settings / aim actually applied
+//  ESP - VTable + CE verified local chains + aim assist + EN/FA
+//  v2.5 - includes Farshad CE offsets (pos / team / HP)
 // =====================================================================
 #include <Windows.h>
 #include <TlHelp32.h>
@@ -74,16 +74,37 @@ static const Loc L_NotFound     = { "Not found",                "پیدا نشد
 static const Loc L_OK           = { "OK",                       "موفق" };
 static const Loc L_Failed       = { "Failed",                   "ناموفق" };
 
+// ============================================================
+// OFFSETS
+// ============================================================
 namespace Off {
-    constexpr uintptr_t MY_POS_X     = 0x242F510;
-    constexpr uintptr_t MY_POS_Y     = 0x242F514;
-    constexpr uintptr_t MY_POS_Z     = 0x242F518;
-    constexpr uintptr_t MATRIX_RVA   = 0x27603D0;
-    constexpr uintptr_t VTABLE_1     = 0x01DDAC3C;
-    constexpr uintptr_t VTABLE_2     = 0x01DDA9C8;
-    constexpr uintptr_t V_OBJ_ORIGIN = 0x538;
-    constexpr uintptr_t OBJ_HP_OFF   = 0x11C;
-    constexpr uintptr_t OBJ_TEAM_OFF = 0xD4;
+    // --- CE verified pointer chains (Farshad) ---
+    // Self Position: [dll+0xE1F664] -> ptr -> +0/+4/+8 floats
+    constexpr uintptr_t MY_POS_PTR_RVA  = 0x00E1F664;
+
+    // Self Team: [dll+0x2E1616C] -> ptr + 0x1D8 (Int32)  2=T  3=CT
+    constexpr uintptr_t MY_TEAM_PTR_RVA = 0x02E1616C;
+    constexpr uintptr_t MY_TEAM_OFFSET  = 0x1D8;
+
+    // HP chain: [dll+0x29BD00C] -> p1 + 0x38 -> p2 + 0x48
+    constexpr uintptr_t HP_PTR_RVA      = 0x029BD00C;
+    constexpr uintptr_t HP_OFFSET1      = 0x38;
+    constexpr uintptr_t HP_OFFSET2      = 0x48;
+
+    // Direct floats (from working Python) — fallback for local pos
+    constexpr uintptr_t MY_POS_X        = 0x242F510;
+    constexpr uintptr_t MY_POS_Y        = 0x242F514;
+    constexpr uintptr_t MY_POS_Z        = 0x242F518;
+
+    // View matrix
+    constexpr uintptr_t MATRIX_RVA      = 0x27603D0;
+
+    // VTable entities
+    constexpr uintptr_t VTABLE_1        = 0x01DDAC3C;
+    constexpr uintptr_t VTABLE_2        = 0x01DDA9C8;
+    constexpr uintptr_t V_OBJ_ORIGIN    = 0x538;
+    constexpr uintptr_t OBJ_HP_OFF      = 0x11C;
+    constexpr uintptr_t OBJ_TEAM_OFF    = 0xD4;
 }
 
 struct Vec3 { float x, y, z; };
@@ -106,11 +127,11 @@ struct EspConfig {
     bool  drawHealth    = false;
     bool  drawDistance  = true;
     bool  aimbot        = false;
-    bool  aimOnlyRMB    = true;   // only when right mouse held
+    bool  aimOnlyRMB    = true;
     float aimSmooth     = 4.0f;
     float aimFov        = 220.0f;
-    float headOffset    = 72.0f;  // world units added to Z for head
-    float widthRatio    = 0.42f;  // box width = height * ratio
+    float headOffset    = 72.0f;
+    float widthRatio    = 0.42f;
     float thickness     = 1.8f;
     float maxDistance   = 2000.0f;
     float healthMax     = 100.0f;
@@ -125,6 +146,8 @@ static DWORD      g_attachedPid = 0;
 static HWND       g_lastTarget  = nullptr;
 static Vec3       g_localPos    = {0, 0, 0};
 static bool       g_haveLocal   = false;
+static int        g_localTeam   = 0;
+static int        g_localHP     = 0;
 static char       g_status[160] = "Not attached";
 static int        g_dbgCount    = 0;
 static int        g_dbgDrawn    = 0;
@@ -139,6 +162,14 @@ template<typename T>
 static inline bool RPM(uintptr_t addr, T& out) {
     SIZE_T read = 0;
     return ReadProcessMemory(g_hProc, (LPCVOID)addr, &out, sizeof(T), &read) && read == sizeof(T);
+}
+
+// 32-bit game → read pointer as uint32
+static inline bool ReadPtr32(uintptr_t addr, uintptr_t& out) {
+    uint32_t tmp = 0;
+    if (!RPM(addr, tmp)) return false;
+    out = (uintptr_t)tmp;
+    return out > 0x10000;
 }
 
 static uintptr_t GetModuleBase(DWORD pid, const wchar_t* mod) {
@@ -158,7 +189,7 @@ static uintptr_t GetModuleBase(DWORD pid, const wchar_t* mod) {
 static void Detach() {
     if (g_hProc) { CloseHandle(g_hProc); g_hProc = nullptr; }
     g_gameBase = 0; g_attachedPid = 0;
-    g_haveLocal = false;
+    g_haveLocal = false; g_localTeam = 0; g_localHP = 0;
     g_dbgCount = 0; g_dbgDrawn = 0; g_dbgVmOk = false;
     g_rawObjects.clear();
     g_tracked.clear();
@@ -237,17 +268,55 @@ static bool AttachFromUI() {
     return true;
 }
 
+// -----------------------------------------------------------------
+// Local player: CE pointer chains FIRST, then direct float fallback
+// -----------------------------------------------------------------
 static void UpdateLocal() {
     g_haveLocal = false;
+    g_localTeam = 0;
+    g_localHP = 0;
     if (!g_hProc || !g_gameBase) return;
-    Vec3 pos{};
-    if (RPM(g_gameBase + Off::MY_POS_X, pos.x) &&
-        RPM(g_gameBase + Off::MY_POS_Y, pos.y) &&
-        RPM(g_gameBase + Off::MY_POS_Z, pos.z)) {
-        if (fabsf(pos.x) > 0.5f || fabsf(pos.y) > 0.5f || fabsf(pos.z) > 0.5f) {
-            g_localPos = pos;
-            g_haveLocal = true;
+
+    // 1) Self Position via CE chain: [dll+MY_POS_PTR_RVA] -> ptr -> xyz
+    uintptr_t posPtr = 0;
+    if (ReadPtr32(g_gameBase + Off::MY_POS_PTR_RVA, posPtr)) {
+        Vec3 pos{};
+        if (RPM(posPtr + 0x0, pos.x) && RPM(posPtr + 0x4, pos.y) && RPM(posPtr + 0x8, pos.z)) {
+            if (fabsf(pos.x) > 0.5f || fabsf(pos.y) > 0.5f || fabsf(pos.z) > 0.5f) {
+                g_localPos = pos;
+                g_haveLocal = true;
+            }
         }
+    }
+
+    // Fallback: direct module floats
+    if (!g_haveLocal) {
+        Vec3 pos{};
+        if (RPM(g_gameBase + Off::MY_POS_X, pos.x) &&
+            RPM(g_gameBase + Off::MY_POS_Y, pos.y) &&
+            RPM(g_gameBase + Off::MY_POS_Z, pos.z)) {
+            if (fabsf(pos.x) > 0.5f || fabsf(pos.y) > 0.5f || fabsf(pos.z) > 0.5f) {
+                g_localPos = pos;
+                g_haveLocal = true;
+            }
+        }
+    }
+
+    // 2) Self Team: [dll+MY_TEAM_PTR_RVA] -> ptr + 0x1D8
+    uintptr_t teamBase = 0;
+    if (ReadPtr32(g_gameBase + Off::MY_TEAM_PTR_RVA, teamBase)) {
+        int team = 0;
+        if (RPM(teamBase + Off::MY_TEAM_OFFSET, team))
+            g_localTeam = team;
+    }
+
+    // 3) HP chain: [dll+HP_PTR_RVA] -> p1 + 0x38 -> p2 + 0x48
+    uintptr_t hp1 = 0, hp2 = 0;
+    if (ReadPtr32(g_gameBase + Off::HP_PTR_RVA, hp1) &&
+        ReadPtr32(hp1 + Off::HP_OFFSET1, hp2)) {
+        int hp = 0;
+        if (RPM(hp2 + Off::HP_OFFSET2, hp))
+            g_localHP = hp;
     }
 }
 
@@ -338,7 +407,6 @@ static void DrawRotatingLogo() {
     ImRotateEnd(dl, angle, ImVec2(posX, posY));
 }
 
-// Reliable relative mouse move via SendInput
 static void MoveMouseRel(int dx, int dy) {
     if (dx == 0 && dy == 0) return;
     INPUT in{};
@@ -351,8 +419,6 @@ static void MoveMouseRel(int dx, int dy) {
 
 static void RunAimAssist(float targetX, float targetY, float sw, float sh) {
     if (!cfg.aimbot) return;
-
-    // Optional: only when RMB held
     if (cfg.aimOnlyRMB && !(GetAsyncKeyState(VK_RBUTTON) & 0x8000))
         return;
 
@@ -362,15 +428,13 @@ static void RunAimAssist(float targetX, float targetY, float sw, float sh) {
     float dy = targetY - cy;
     float dist = sqrtf(dx * dx + dy * dy);
 
-    if (dist < 1.5f) return;                 // already on target
-    if (dist > cfg.aimFov) return;           // outside FOV
+    if (dist < 1.5f) return;
+    if (dist > cfg.aimFov) return;
 
-    // Smooth: higher = slower. Clamp so we always move at least 1px when far.
     float smooth = cfg.aimSmooth < 1.0f ? 1.0f : cfg.aimSmooth;
     float stepX = dx / smooth;
     float stepY = dy / smooth;
 
-    // Cap max step per frame so it doesn't jump too hard
     const float maxStep = 40.0f;
     if (stepX >  maxStep) stepX =  maxStep;
     if (stepX < -maxStep) stepX = -maxStep;
@@ -380,7 +444,6 @@ static void RunAimAssist(float targetX, float targetY, float sw, float sh) {
     int mx = (int)(stepX >= 0 ? stepX + 0.5f : stepX - 0.5f);
     int my = (int)(stepY >= 0 ? stepY + 0.5f : stepY - 0.5f);
 
-    // Ensure non-zero movement when still far from target
     if (mx == 0 && fabsf(dx) > 2.0f) mx = (dx > 0) ? 1 : -1;
     if (my == 0 && fabsf(dy) > 2.0f) my = (dy > 0) ? 1 : -1;
 
@@ -402,7 +465,7 @@ void RenderESPMenu() {
 
     ImGui::TextColored(ImVec4(0.40f, 0.85f, 1.00f, 1.00f), "%s", L_Title());
     ImGui::SameLine();
-    ImGui::TextDisabled("v2.4");
+    ImGui::TextDisabled("v2.5");
     ImGui::Separator();
 
     ImGui::Text("%s", L_Language());
@@ -422,7 +485,8 @@ void RenderESPMenu() {
         if (ImGui::BeginTabItem(L_TabMain()))
         {
             ImGui::Checkbox(L_TeamCheck(), &cfg.teamCheck);
-            // Max distance — this value is used every frame in the draw loop
+            if (g_localTeam != 0)
+                ImGui::TextDisabled("%s: %d", g_lang == Lang::FA ? "تیم خودی" : "My team", g_localTeam);
             ImGui::SliderFloat(L_MaxDist(), &cfg.maxDistance, 50.0f, 4000.0f, "%.0f m");
             ImGui::TextDisabled(g_lang == Lang::FA
                 ? "باکس‌های دورتر از این مقدار کشیده نمی‌شوند"
@@ -440,7 +504,6 @@ void RenderESPMenu() {
             ImGui::Checkbox(L_Distance(), &cfg.drawDistance);
 
             ImGui::Separator();
-            // These three directly control drawn geometry every frame
             ImGui::SliderFloat(L_Thickness(), &cfg.thickness, 0.5f, 6.0f, "%.1f");
             ImGui::SliderFloat(L_BoxHeight(), &cfg.headOffset, 30.0f, 140.0f, "%.0f");
             ImGui::SliderFloat(L_WidthRatio(), &cfg.widthRatio, 0.15f, 0.90f, "%.2f");
@@ -477,7 +540,10 @@ void RenderESPMenu() {
             ImGui::Text("%s : %s", L_Camera(), g_dbgVmOk ? L_OK() : L_Failed());
             ImGui::Text("%s : %d", L_Players(), g_dbgCount);
             ImGui::Text("%s : %d", L_BoxesDrawn(), g_dbgDrawn);
-            ImGui::Text("MaxDist cfg : %.0f", cfg.maxDistance);
+            if (g_localTeam != 0)
+                ImGui::Text("Team : %d", g_localTeam);
+            if (g_localHP > 0)
+                ImGui::Text("HP   : %d", g_localHP);
             ImGui::EndTabItem();
         }
 
@@ -538,9 +604,8 @@ void RenderESPBoxes() {
         return;
     }
 
-    // Snap config values used this frame (so UI changes apply immediately)
     const float maxDist     = cfg.maxDistance;
-    const float boxHeightZ  = cfg.headOffset;   // world Z offset for head
+    const float boxHeightZ  = cfg.headOffset;
     const float widthRatio  = cfg.widthRatio;
     const float thickness   = cfg.thickness;
     const bool  doBox       = cfg.drawBox;
@@ -584,26 +649,22 @@ void RenderESPBoxes() {
 
         if (!te.valid) continue;
 
-        // ---- Distance filter (REAL max distance) ----
+        // Team check using CE-verified local team
+        if (cfg.teamCheck && g_localTeam != 0 && te.team == g_localTeam)
+            continue;
+
         float dist = -1.0f;
         if (g_haveLocal) {
             float dx = te.pos.x - g_localPos.x;
             float dy = te.pos.y - g_localPos.y;
             float dz = te.pos.z - g_localPos.z;
             dist = sqrtf(dx * dx + dy * dy + dz * dz);
-
-            // Skip self / extremely close
             if (dist < 15.0f) continue;
-
-            // HARD filter by user slider
             if (dist > maxDist) continue;
         }
-        // If we don't have local pos, still draw (can't filter by distance)
 
         ++g_dbgCount;
 
-        // ---- Box geometry from REAL config ----
-        // feet = origin, head = origin + (0,0,boxHeightZ)
         Vec3 head = te.pos;
         head.z += boxHeightZ;
 
@@ -614,18 +675,17 @@ void RenderESPBoxes() {
         float h = feetScr.y - headScr.y;
         if (h < 6.0f || h > 2000.0f) continue;
 
-        // width driven by Width Ratio slider
         float w = h * widthRatio;
         if (w < 2.0f) w = 2.0f;
 
         float bx = headScr.x - w * 0.5f;
         float by = headScr.y;
 
-        // Aim point = upper chest (about 25% down from head)
         float aimX = headScr.x;
         float aimY = headScr.y + h * 0.25f;
 
-        ImU32 col = C(cfg.enemyColor);
+        ImU32 col = (cfg.teamCheck && g_localTeam != 0 && te.team == g_localTeam)
+            ? C(cfg.mateColor) : C(cfg.enemyColor);
 
         if (doBox)
             dl->AddRect(ImVec2(bx, by), ImVec2(bx + w, by + h), col, 0.0f, 0, thickness);
@@ -642,7 +702,6 @@ void RenderESPBoxes() {
 
         ++g_dbgDrawn;
 
-        // Aim candidate: closest to crosshair inside FOV
         if (cfg.aimbot) {
             float adx = aimX - sw * 0.5f;
             float ady = aimY - sh * 0.5f;
@@ -656,10 +715,8 @@ void RenderESPBoxes() {
         }
     }
 
-    // Draw FOV circle when aim is on (visual feedback)
-    if (cfg.aimbot) {
+    if (cfg.aimbot)
         dl->AddCircle(ImVec2(sw * 0.5f, sh * 0.5f), cfg.aimFov, IM_COL32(255, 255, 255, 40), 64, 1.0f);
-    }
 
     if (hasAimTarget) {
         dl->AddLine(ImVec2(bestAimX - 8, bestAimY), ImVec2(bestAimX + 8, bestAimY), IM_COL32(0, 255, 0, 220), 1.5f);
