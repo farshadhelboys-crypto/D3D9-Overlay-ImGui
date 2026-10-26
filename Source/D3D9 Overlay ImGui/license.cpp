@@ -112,6 +112,25 @@ std::string KeyPath() {
     strcat_s(path, "farshad_esp.key");
     return path;
 }
+std::string TgPath() {
+    char path[MAX_PATH]{};
+    GetTempPathA(MAX_PATH, path);
+    strcat_s(path, "farshad_esp.tg");
+    return path;
+}
+void SaveTg(const std::string& tg) {
+    std::ofstream f(TgPath(), std::ios::trunc);
+    if (f) f << tg;
+}
+std::string LoadTg() {
+    std::ifstream f(TgPath());
+    std::string t;
+    if (f) std::getline(f, t);
+    while (!t.empty() && (t.back()=='\r'||t.back()=='\n'||t.back()==' ')) t.pop_back();
+    if (!t.empty() && t.size() < sizeof(g_inputTg))
+        strcpy_s(g_inputTg, t.c_str());
+    return t;
+}
 
 } // anon
 
@@ -164,7 +183,10 @@ Status Activate(const std::string& key, const std::string& tgId) {
     st.server_time = JsonNum(resp, "server_time");
     if (st.error == "join_channel") st.need_channel = true;
     g_licensed = st.ok;
-    if (st.ok) SaveKey(key);
+    if (st.ok) {
+        SaveKey(key);
+        if (!tgId.empty()) SaveTg(tgId);
+    }
     g_last = st;
     return st;
 }
@@ -173,7 +195,11 @@ Status Heartbeat() {
     if (g_key.empty()) g_key = LoadSavedKey();
     Status st;
     if (g_key.empty()) { st.error = "no_key"; return st; }
-    std::string body = "{\"key\":\"" + g_key + "\",\"hwid\":\"" + GetHWID() + "\"}";
+    std::string tg = LoadTg();
+    if (tg.empty() && g_inputTg[0]) tg = g_inputTg;
+    std::string body = "{\"key\":\"" + g_key + "\",\"hwid\":\"" + GetHWID() + "\"";
+    if (!tg.empty()) body += ",\"tg_id\":\"" + tg + "\"";
+    body += "}";
     std::string resp = HttpPost("/api/heartbeat", body);
     if (resp.empty()) { st.error = "network"; g_last = st; return st; }
     st.ok = JsonBool(resp, "ok");
@@ -182,8 +208,12 @@ Status Heartbeat() {
     st.days_left = (int)JsonNum(resp, "days_left");
     st.expires_at = JsonNum(resp, "expires_at");
     st.server_time = JsonNum(resp, "server_time");
+    if (st.error == "join_channel") st.need_channel = true;
     g_licensed = st.ok;
     g_last = st;
+    if (!st.ok && st.need_channel) {
+        g_uiMsg = st.message.empty() ? "Please join the channel" : st.message;
+    }
     if (resp.find("\"body\"") != std::string::npos) {
         std::string b = JsonStr(resp, "body");
         if (!b.empty()) g_uiMsg = b;
@@ -208,12 +238,13 @@ static void ExitApp() {
 
 bool DrawGateAndTick() {
     double now = ImGui::GetTime();
-    if (g_licensed && (now - g_lastBeat) > 300.0) {
+    if (g_licensed && (now - g_lastBeat) > 60.0) {
         g_lastBeat = now;
         Heartbeat();
+        if (!g_licensed && g_last.need_channel)
+            g_uiMsg = g_last.message.empty() ? "Please join the channel" : g_last.message;
     }
 
-    // Exit with END only
     if (GetAsyncKeyState(VK_END) & 1)
         ExitApp();
 
@@ -252,13 +283,14 @@ bool DrawGateAndTick() {
     ImGui::TextDisabled("Press END to exit.");
     ImGui::Spacing();
     ImGui::InputText("License", g_inputKey, sizeof(g_inputKey));
-    ImGui::InputText("Telegram ID (optional)", g_inputTg, sizeof(g_inputTg));
+    if (g_inputTg[0] == 0) LoadTg();
+    ImGui::InputText("Telegram ID", g_inputTg, sizeof(g_inputTg));
 
     if (ImGui::Button("Activate", ImVec2(140, 0))) {
         auto st = Activate(g_inputKey, g_inputTg);
         if (!st.ok) {
             if (st.need_channel)
-                g_uiMsg = st.message.empty() ? "Please join the Telegram channel" : st.message;
+                g_uiMsg = st.message.empty() ? "Please join the channel" : st.message;
             else if (st.error == "hwid_mismatch")
                 g_uiMsg = "This license is locked to another PC";
             else if (st.error == "expired")
