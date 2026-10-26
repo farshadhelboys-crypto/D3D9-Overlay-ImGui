@@ -1,7 +1,5 @@
 // =====================================================================
-//  ESP v2.5 — English UI — remote offsets + auto rescan
-//  offsets: GitHub offsets/offsets.json
-//  Boxes follow POSITION; dead/despawned entities drop when coords die or leave scan
+//  ESP v2.5 — remote offsets + auto rescan + aimbot (RMB/LMB/ALT)
 // =====================================================================
 #include <Windows.h>
 #include <TlHelp32.h>
@@ -101,12 +99,21 @@ static bool LoadOffsetsFromGitHub() {
 struct Vec3{float x,y,z;}; struct Vec2{float x,y;};
 struct TrackedEntity{uintptr_t obj=0; Vec3 pos{0,0,0}; int hp=0,team=0,life=0; bool valid=false;};
 struct EspConfig{
-    bool enabled=true,teamCheck=false,drawBox=true,drawCorners=false,drawHealth=false,drawDistance=true,aimbot=false,aimOnlyRMB=true;
-    float aimSmooth=4.f,aimFov=220.f,headOffset=72.f,widthRatio=0.42f,thickness=1.8f,maxDistance=2000.f,healthMax=100.f;
+    bool enabled=true,teamCheck=false,drawBox=true,drawCorners=false,drawHealth=false,drawDistance=true;
+    bool aimbot=false;
+    bool aimOnRMB=true;
+    bool aimOnLMB=false;
+    bool aimOnAlt=false;
+    float aimSmooth=4.f;
+    float aimAltSmooth=6.f;
+    float aimAltPrecision=6.f;
+    float aimFov=120.f;
+    float headOffset=72.f,widthRatio=0.42f,thickness=1.8f,maxDistance=2000.f,healthMax=100.f;
     int healthSide=0;
     ImVec4 enemyColor{1.f,0.25f,0.25f,1.f}, mateColor{0.25f,0.85f,1.f,1.f};
 } cfg;
 
+static DWORD g_lastAutoShot = 0;
 static HANDLE g_hProc=nullptr; static uintptr_t g_gameBase=0; static DWORD g_attachedPid=0;
 static HWND g_lastTarget=nullptr; static Vec3 g_localPos{0,0,0}; static bool g_haveLocal=false;
 static int g_localTeam=0,g_localHP=0; static char g_status[160]="Not attached";
@@ -131,7 +138,6 @@ static void Detach(){
     g_dbgCount=0;g_dbgDrawn=0;g_dbgVmOk=false;g_rawObjects.clear();g_tracked.clear();g_scanned=false;strcpy_s(g_status,"Not attached");
 }
 
-// Rescan VTable; keep only entities still present. Missing ones = dead/left → no box.
 static void ScanVTableObjects(bool full_reset=false){
     if(!g_hProc||!g_gameBase||!Off.loaded)return;
     if(full_reset){g_rawObjects.clear();g_tracked.clear();}
@@ -197,9 +203,9 @@ static inline ImU32 C(ImVec4 v){return ImGui::ColorConvertFloat4ToU32(v);}
 
 void RenderESPMenu(){
     if(!UI::IsWindowTargeted())return; EnsureOffsets();
-    ImGui::SetNextWindowSize(ImVec2(360,420),ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(360,440),ImGuiCond_FirstUseEver);
     if(!ImGui::Begin("farshad pm Esp",nullptr,ImGuiWindowFlags_NoCollapse|ImGuiWindowFlags_AlwaysVerticalScrollbar)){ImGui::End();return;}
-    ImGui::TextColored(ImVec4(0.4f,0.85f,1.f,1.f),"farshad pm Esp"); ImGui::SameLine(); ImGui::TextDisabled("pos-based");
+    ImGui::TextColored(ImVec4(0.4f,0.85f,1.f,1.f),"farshad pm Esp"); ImGui::SameLine(); ImGui::TextDisabled("aim-v2");
     ImGui::Separator();
     ImGui::Checkbox("Enable ESP",&cfg.enabled); ImGui::SameLine();
     if(ImGui::Button("Re-attach / Rescan")) AttachFromUI();
@@ -219,9 +225,18 @@ void RenderESPMenu(){
         }
         if(ImGui::BeginTabItem("Aimbot")){
             ImGui::Checkbox("Enable Aim Assist",&cfg.aimbot);
-            ImGui::Checkbox("Only while RMB held",&cfg.aimOnlyRMB);
-            ImGui::SliderFloat("Smooth",&cfg.aimSmooth,1.f,15.f,"%.1f");
-            ImGui::SliderFloat("FOV (px)",&cfg.aimFov,40.f,600.f,"%.0f");
+            ImGui::Separator();
+            ImGui::TextDisabled("Activation");
+            ImGui::Checkbox("Aim on RMB (right click)",&cfg.aimOnRMB);
+            ImGui::Checkbox("Aim on LMB (left click)",&cfg.aimOnLMB);
+            ImGui::Checkbox("Aim on ALT (pull + autofire)",&cfg.aimOnAlt);
+            ImGui::Separator();
+            ImGui::SliderFloat("Smooth (RMB/LMB)",&cfg.aimSmooth,1.f,20.f,"%.1f");
+            ImGui::SliderFloat("ALT Smooth",&cfg.aimAltSmooth,1.f,25.f,"%.1f");
+            ImGui::SliderFloat("ALT Precision (px)",&cfg.aimAltPrecision,1.f,40.f,"%.0f");
+            ImGui::SliderFloat("FOV (px)",&cfg.aimFov,0.f,600.f,"%.0f");
+            ImGui::TextDisabled("FOV 0 = only near crosshair center");
+            ImGui::TextDisabled("ALT: pull to green cross then auto LMB");
             ImGui::EndTabItem();
         }
         if(ImGui::BeginTabItem("Status")){
@@ -261,13 +276,11 @@ void RenderESPBoxes(){
     for(auto& te:g_tracked){
         Vec3 origin{};
         bool ok=RPM(te.obj+Off.V_OBJ_ORIGIN,origin.x)&&RPM(te.obj+Off.V_OBJ_ORIGIN+4,origin.y)&&RPM(te.obj+Off.V_OBJ_ORIGIN+8,origin.z);
-        // unreasonable / zero coords → treat as dead or invalid
         if(ok){
             if(fabsf(origin.x)>30000.f||fabsf(origin.y)>30000.f||fabsf(origin.z)>30000.f) ok=false;
             if(fabsf(origin.x)<0.05f&&fabsf(origin.y)<0.05f) ok=false;
         }
         int hp=0,team=0;
-        // Box is driven by POSITION, not HP.
         if(ok){
             RPM(te.obj+Off.OBJ_HP_OFF,hp); RPM(te.obj+Off.OBJ_TEAM_OFF,team);
             te.hp=hp; te.team=team;
@@ -275,7 +288,6 @@ void RenderESPBoxes(){
             te.life=kMaxLife;
             te.valid=true;
         } else {
-            // coordinate unreadable or garbage → fade out fast
             if(te.life>0) te.life--;
             if(te.life<=0) te.valid=false;
         }
@@ -302,16 +314,69 @@ void RenderESPBoxes(){
         if(cfg.aimbot){
             float ax=headS.x, ay=headS.y+h*0.25f;
             float adx=ax-sw*0.5f, ady=ay-sh*0.5f; float ad=sqrtf(adx*adx+ady*ady);
-            if(ad<bestD&&ad<=cfg.aimFov){bestD=ad;bestX=ax;bestY=ay;hasAim=true;}
+            float fovLimit = cfg.aimFov <= 0.f ? 1.f : cfg.aimFov;
+            if(ad<bestD&&ad<=fovLimit){bestD=ad;bestX=ax;bestY=ay;hasAim=true;}
         }
     }
-    if(cfg.aimbot) dl->AddCircle(ImVec2(sw*0.5f,sh*0.5f),cfg.aimFov,IM_COL32(255,255,255,40),64,1.f);
-    if(hasAim&&cfg.aimbot){
-        if(!cfg.aimOnlyRMB||(GetAsyncKeyState(VK_RBUTTON)&0x8000)){
-            float dx=bestX-sw*0.5f, dy=bestY-sh*0.5f;
-            float sm=cfg.aimSmooth<1.f?1.f:cfg.aimSmooth;
-            INPUT in{}; in.type=INPUT_MOUSE; in.mi.dx=(int)(dx/sm); in.mi.dy=(int)(dy/sm); in.mi.dwFlags=MOUSEEVENTF_MOVE;
-            if(in.mi.dx||in.mi.dy) SendInput(1,&in,sizeof(INPUT));
+
+    if(cfg.aimbot && cfg.aimFov > 0.f)
+        dl->AddCircle(ImVec2(sw*0.5f,sh*0.5f),cfg.aimFov,IM_COL32(255,255,255,40),64,1.f);
+
+    if(hasAim && cfg.aimbot){
+        const bool rmb = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
+        const bool lmb = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+        const bool alt = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+
+        const bool useRmb = cfg.aimOnRMB && rmb;
+        const bool useLmb = cfg.aimOnLMB && lmb;
+        const bool useAlt = cfg.aimOnAlt && alt;
+        const bool anyMode = cfg.aimOnRMB || cfg.aimOnLMB || cfg.aimOnAlt;
+        const bool active = useRmb || useLmb || useAlt || !anyMode;
+
+        if(active){
+            float cx = sw * 0.5f, cy = sh * 0.5f;
+            float dx = bestX - cx, dy = bestY - cy;
+            float dist = sqrtf(dx*dx + dy*dy);
+
+            dl->AddLine(ImVec2(bestX-8,bestY),ImVec2(bestX+8,bestY),IM_COL32(0,255,0,230),1.5f);
+            dl->AddLine(ImVec2(bestX,bestY-8),ImVec2(bestX,bestY+8),IM_COL32(0,255,0,230),1.5f);
+            dl->AddLine(ImVec2(cx,cy),ImVec2(bestX,bestY),IM_COL32(0,255,0,120),1.0f);
+
+            float sm = useAlt ? cfg.aimAltSmooth : cfg.aimSmooth;
+            if(sm < 1.f) sm = 1.f;
+            float stepX = dx / sm, stepY = dy / sm;
+            const float maxStep = 45.f;
+            if(stepX >  maxStep) stepX =  maxStep;
+            if(stepX < -maxStep) stepX = -maxStep;
+            if(stepY >  maxStep) stepY =  maxStep;
+            if(stepY < -maxStep) stepY = -maxStep;
+
+            int mx = (int)(stepX >= 0 ? stepX + 0.5f : stepX - 0.5f);
+            int my = (int)(stepY >= 0 ? stepY + 0.5f : stepY - 0.5f);
+            if(!mx && fabsf(dx) > 1.5f) mx = dx > 0 ? 1 : -1;
+            if(!my && fabsf(dy) > 1.5f) my = dy > 0 ? 1 : -1;
+
+            if(mx || my){
+                INPUT in{}; in.type=INPUT_MOUSE;
+                in.mi.dx=mx; in.mi.dy=my; in.mi.dwFlags=MOUSEEVENTF_MOVE;
+                SendInput(1,&in,sizeof(INPUT));
+            }
+
+            if(useAlt){
+                float prec = cfg.aimAltPrecision < 1.f ? 1.f : cfg.aimAltPrecision;
+                if(dist <= prec){
+                    DWORD now = GetTickCount();
+                    if(now - g_lastAutoShot > 120){
+                        g_lastAutoShot = now;
+                        INPUT click[2]{};
+                        click[0].type = INPUT_MOUSE;
+                        click[0].mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+                        click[1].type = INPUT_MOUSE;
+                        click[1].mi.dwFlags = MOUSEEVENTF_LEFTUP;
+                        SendInput(2, click, sizeof(INPUT));
+                    }
+                }
+            }
         }
     }
 }
