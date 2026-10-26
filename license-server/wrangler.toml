@@ -1,0 +1,12 @@
+name = "farshad-esp-license"
+main = "worker.js"
+compatibility_date = "2024-10-01"
+
+[[kv_namespaces]]
+binding = "KV"
+id = "REPLACE_WITH_YOUR_KV_ID"
+
+[vars]
+ADMIN_KEY = "CHANGE_ME_ADMIN_SECRET"
+TELEGRAM_BOT_TOKEN = ""
+TELEGRAM_CHANNEL_ID = ""
