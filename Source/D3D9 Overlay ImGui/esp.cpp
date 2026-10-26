@@ -1,6 +1,7 @@
 // =====================================================================
 //  ESP v2.5 — English UI — remote offsets + auto rescan
 //  offsets: GitHub offsets/offsets.json
+//  Boxes follow POSITION; dead/despawned entities drop when coords die or leave scan
 // =====================================================================
 #include <Windows.h>
 #include <TlHelp32.h>
@@ -113,8 +114,8 @@ static int g_dbgCount=0,g_dbgDrawn=0; static bool g_dbgVmOk=false;
 static std::vector<uintptr_t> g_rawObjects; static std::vector<TrackedEntity> g_tracked;
 static bool g_scanned=false,g_offsetsTried=false;
 static DWORD g_lastRescanTick=0;
-static const DWORD kRescanMs=3000;
-static const int kMaxLife=4;
+static const DWORD kRescanMs=2000;
+static const int kMaxLife=2;
 
 template<typename T> static inline bool RPM(uintptr_t addr,T& out){ SIZE_T r=0; return ReadProcessMemory(g_hProc,(LPCVOID)addr,&out,sizeof(T),&r)&&r==sizeof(T); }
 static inline bool ReadPtr32(uintptr_t addr,uintptr_t& out){ uint32_t t=0; if(!RPM(addr,t))return false; out=(uintptr_t)t; return out>0x10000; }
@@ -129,6 +130,8 @@ static void Detach(){
     if(g_hProc){CloseHandle(g_hProc);g_hProc=nullptr;} g_gameBase=0;g_attachedPid=0;g_haveLocal=false;g_localTeam=0;g_localHP=0;
     g_dbgCount=0;g_dbgDrawn=0;g_dbgVmOk=false;g_rawObjects.clear();g_tracked.clear();g_scanned=false;strcpy_s(g_status,"Not attached");
 }
+
+// Rescan VTable; keep only entities still present. Missing ones = dead/left → no box.
 static void ScanVTableObjects(bool full_reset=false){
     if(!g_hProc||!g_gameBase||!Off.loaded)return;
     if(full_reset){g_rawObjects.clear();g_tracked.clear();}
@@ -144,13 +147,18 @@ static void ScanVTableObjects(bool full_reset=false){
             if(val==targets[0]||val==targets[1]) found.push_back(addr+i);
         }
     }
+    std::vector<TrackedEntity> kept;
     for(uintptr_t o:found){
-        bool exists=false; for(const auto& te:g_tracked){ if(te.obj==o){exists=true;break;} }
-        if(!exists){ TrackedEntity te; te.obj=o; g_tracked.push_back(te); }
+        TrackedEntity* existing=nullptr;
+        for(auto& te:g_tracked){ if(te.obj==o){ existing=&te; break; } }
+        if(existing) kept.push_back(*existing);
+        else { TrackedEntity te; te.obj=o; kept.push_back(te); }
     }
+    g_tracked.swap(kept);
     g_rawObjects=found; g_scanned=true; g_lastRescanTick=GetTickCount();
-    sprintf_s(g_status,"Attached | Players: %zu (tracked %zu)",found.size(),g_tracked.size());
+    sprintf_s(g_status,"Attached | Players: %zu",found.size());
 }
+
 static bool AttachFromUI(){
     Detach(); EnsureOffsets();
     if(!Off.loaded){strcpy_s(g_status,Off.status);return false;}
@@ -191,7 +199,7 @@ void RenderESPMenu(){
     if(!UI::IsWindowTargeted())return; EnsureOffsets();
     ImGui::SetNextWindowSize(ImVec2(360,420),ImGuiCond_FirstUseEver);
     if(!ImGui::Begin("farshad pm Esp",nullptr,ImGuiWindowFlags_NoCollapse|ImGuiWindowFlags_AlwaysVerticalScrollbar)){ImGui::End();return;}
-    ImGui::TextColored(ImVec4(0.4f,0.85f,1.f,1.f),"farshad pm Esp"); ImGui::SameLine(); ImGui::TextDisabled("auto-scan");
+    ImGui::TextColored(ImVec4(0.4f,0.85f,1.f,1.f),"farshad pm Esp"); ImGui::SameLine(); ImGui::TextDisabled("pos-based");
     ImGui::Separator();
     ImGui::Checkbox("Enable ESP",&cfg.enabled); ImGui::SameLine();
     if(ImGui::Button("Re-attach / Rescan")) AttachFromUI();
@@ -253,16 +261,23 @@ void RenderESPBoxes(){
     for(auto& te:g_tracked){
         Vec3 origin{};
         bool ok=RPM(te.obj+Off.V_OBJ_ORIGIN,origin.x)&&RPM(te.obj+Off.V_OBJ_ORIGIN+4,origin.y)&&RPM(te.obj+Off.V_OBJ_ORIGIN+8,origin.z);
-        if(ok){ if(fabsf(origin.x)>30000.f||fabsf(origin.y)>30000.f||fabsf(origin.z)>30000.f) ok=false;
-                if(fabsf(origin.x)<0.05f&&fabsf(origin.y)<0.05f) ok=false; }
+        // unreasonable / zero coords → treat as dead or invalid
+        if(ok){
+            if(fabsf(origin.x)>30000.f||fabsf(origin.y)>30000.f||fabsf(origin.z)>30000.f) ok=false;
+            if(fabsf(origin.x)<0.05f&&fabsf(origin.y)<0.05f) ok=false;
+        }
         int hp=0,team=0;
+        // Box is driven by POSITION, not HP.
         if(ok){
             RPM(te.obj+Off.OBJ_HP_OFF,hp); RPM(te.obj+Off.OBJ_TEAM_OFF,team);
             te.hp=hp; te.team=team;
-            if(hp<=0){ te.life=0; te.valid=false; }
-            else { te.pos=origin; te.life=kMaxLife; te.valid=true; }
+            te.pos=origin;
+            te.life=kMaxLife;
+            te.valid=true;
         } else {
-            if(te.life>0) te.life--; if(te.life<=0) te.valid=false;
+            // coordinate unreadable or garbage → fade out fast
+            if(te.life>0) te.life--;
+            if(te.life<=0) te.valid=false;
         }
         if(!te.valid) continue;
         if(cfg.teamCheck&&g_localTeam&&te.team==g_localTeam) continue;
