@@ -213,9 +213,7 @@ bool DrawGateAndTick() {
         Heartbeat();
     }
 
-    // Always allow exit keys
-    if (GetAsyncKeyState(VK_ESCAPE) & 1)
-        ExitApp();
+    // Exit with END only
     if (GetAsyncKeyState(VK_END) & 1)
         ExitApp();
 
@@ -233,7 +231,6 @@ bool DrawGateAndTick() {
         return true;
     }
 
-    // License gate — closable, with Exit
     bool open = true;
     ImGui::SetNextWindowSize(ImVec2(420, 300), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x * 0.5f, ImGui::GetIO().DisplaySize.y * 0.5f),
@@ -252,7 +249,7 @@ bool DrawGateAndTick() {
     ImGui::TextColored(ImVec4(0.4f, 0.85f, 1.f, 1.f), "Farshad ESP");
     ImGui::Separator();
     ImGui::TextWrapped("Please enter your license key.");
-    ImGui::TextDisabled("Press ESC or END to exit.");
+    ImGui::TextDisabled("Press END to exit.");
     ImGui::Spacing();
     ImGui::InputText("License", g_inputKey, sizeof(g_inputKey));
     ImGui::InputText("Telegram ID (optional)", g_inputTg, sizeof(g_inputTg));
