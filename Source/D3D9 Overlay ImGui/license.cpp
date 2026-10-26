@@ -191,6 +191,13 @@ Status Activate(const std::string& key, const std::string& tgId) {
     return st;
 }
 
+Status ActivateSaved() {
+    std::string k = LoadSavedKey();
+    if (k.empty()) { Status st; st.error = "no_key"; return st; }
+    std::string tg = LoadTg();
+    return Activate(k, tg);
+}
+
 Status Heartbeat() {
     // License validity only — channel membership checked only at Activate (app start)
     if (g_key.empty()) g_key = LoadSavedKey();
