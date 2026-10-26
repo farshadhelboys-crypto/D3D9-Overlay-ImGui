@@ -2,8 +2,8 @@
 #include <string>
 
 namespace License {
-    // Cloudflare Worker (no trailing slash)
-    constexpr const char* API_BASE = "https://farshad-esp-licesnse.farshadhelboys.workers.dev";
+    // Cloudflare Worker (tested OK)
+    constexpr const char* API_BASE = "https://farshad-esp-license.farshadhelboys.workers.dev";
 
     struct Status {
         bool ok = false;
