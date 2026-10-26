@@ -1,5 +1,5 @@
 // =====================================================================
-//  ESP v2.5 — manual attach + aimbot (RMB/LMB/ALT)
+//  ESP — manual attach + aimbot (RMB/LMB/ALT) — esp demo
 // =====================================================================
 #include <Windows.h>
 #include <TlHelp32.h>
@@ -108,6 +108,7 @@ struct EspConfig{
     float aimSmooth=4.f;
     float aimAltSmooth=6.f;
     float aimAltPrecision=6.f;
+    float aimFireDelayMs=150.f;
     float aimFov=120.f;
     float headOffset=72.f,widthRatio=0.42f,thickness=1.8f,maxDistance=2000.f,healthMax=100.f;
     int healthSide=0;
@@ -204,10 +205,11 @@ void RenderESPMenu(){
     if(!UI::IsWindowTargeted())return; EnsureOffsets();
     ImGui::SetNextWindowSize(ImVec2(360,440),ImGuiCond_FirstUseEver);
     if(!ImGui::Begin("farshad pm Esp",nullptr,ImGuiWindowFlags_NoCollapse|ImGuiWindowFlags_AlwaysVerticalScrollbar)){ImGui::End();return;}
-    ImGui::TextColored(ImVec4(0.4f,0.85f,1.f,1.f),"farshad pm Esp"); ImGui::SameLine(); ImGui::TextDisabled("v2");
+    ImGui::TextColored(ImVec4(0.4f,0.85f,1.f,1.f),"farshad pm Esp"); ImGui::SameLine(); ImGui::TextDisabled("esp demo");
     ImGui::Separator();
     ImGui::Checkbox("Enable ESP",&cfg.enabled); ImGui::SameLine();
     if(ImGui::Button("Attach")) AttachFromUI();
+    ImGui::SameLine(); ImGui::TextDisabled("F5 = Attach/Rescan");
     if(ImGui::Button("Reload config")){g_offsetsTried=false;Off.loaded=false;EnsureOffsets();}
     ImGui::TextColored(ImVec4(0.5f,1.f,0.5f,1.f),"%s",g_status);
     if(!Off.loaded) ImGui::TextDisabled("%s",Off.status);
@@ -234,8 +236,9 @@ void RenderESPMenu(){
             ImGui::SliderFloat("Smooth (RMB/LMB)",&cfg.aimSmooth,1.f,20.f,"%.1f");
             ImGui::SliderFloat("ALT Smooth",&cfg.aimAltSmooth,1.f,25.f,"%.1f");
             ImGui::SliderFloat("ALT Precision (px)",&cfg.aimAltPrecision,1.f,40.f,"%.0f");
+            ImGui::SliderFloat("Fire Delay (ms)",&cfg.aimFireDelayMs,50.f,1000.f,"%.0f");
             ImGui::SliderFloat("FOV (px)",&cfg.aimFov,0.f,600.f,"%.0f");
-            ImGui::TextDisabled("ALT aim-only = pull to target, no auto click");
+            ImGui::TextDisabled("ALT aim-only = pull only; Fire Delay = autofire rate");
             ImGui::EndTabItem();
         }
         if(ImGui::BeginTabItem("Status")){
@@ -257,6 +260,9 @@ void RenderESPMenu(){
 
 void RenderESPBoxes(){
     EnsureOffsets(); if(!Off.loaded) return;
+    if (GetAsyncKeyState(VK_F5) & 1) {
+        if (UI::IsWindowTargeted()) AttachFromUI();
+    }
     if(UI::GetTargetWindow()!=g_lastTarget){
         g_lastTarget=UI::GetTargetWindow();
         Detach();
@@ -367,7 +373,8 @@ void RenderESPBoxes(){
                 float prec = cfg.aimAltPrecision < 1.f ? 1.f : cfg.aimAltPrecision;
                 if(dist <= prec){
                     DWORD now = GetTickCount();
-                    if(now - g_lastAutoShot > 120){
+                    DWORD delay = (DWORD)(cfg.aimFireDelayMs < 50.f ? 50.f : cfg.aimFireDelayMs);
+                    if(now - g_lastAutoShot > delay){
                         g_lastAutoShot = now;
                         INPUT click[2]{};
                         click[0].type = INPUT_MOUSE;
