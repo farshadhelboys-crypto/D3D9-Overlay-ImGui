@@ -4,7 +4,6 @@
 #include <winhttp.h>
 #include <string>
 #include <vector>
-#include <sstream>
 #include <fstream>
 #include <cstdio>
 #include <cstring>
@@ -23,14 +22,6 @@ char g_inputKey[64] = {};
 char g_inputTg[32] = {};
 std::string g_uiMsg;
 
-std::string WideToUtf8(const std::wstring& w) {
-    if (w.empty()) return {};
-    int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), nullptr, 0, nullptr, nullptr);
-    std::string s(n, 0);
-    WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), &s[0], n, nullptr, nullptr);
-    return s;
-}
-
 std::wstring Utf8ToWide(const std::string& s) {
     if (s.empty()) return {};
     int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), nullptr, 0);
@@ -41,8 +32,6 @@ std::wstring Utf8ToWide(const std::string& s) {
 
 std::string HttpPost(const std::string& path, const std::string& jsonBody) {
     std::string result;
-    std::wstring host, urlPath;
-    // parse API_BASE
     std::string base = API_BASE;
     bool https = true;
     size_t pos = 0;
@@ -51,13 +40,14 @@ std::string HttpPost(const std::string& path, const std::string& jsonBody) {
     size_t slash = base.find('/', pos);
     std::string hostA = slash == std::string::npos ? base.substr(pos) : base.substr(pos, slash - pos);
     std::string pathA = (slash == std::string::npos ? "" : base.substr(slash)) + path;
-    host = Utf8ToWide(hostA);
-    urlPath = Utf8ToWide(pathA);
+    std::wstring host = Utf8ToWide(hostA);
+    std::wstring urlPath = Utf8ToWide(pathA);
 
     HINTERNET hSession = WinHttpOpen(L"FarshadESP/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
         WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!hSession) return {};
-    HINTERNET hConnect = WinHttpConnect(hSession, host.c_str(), https ? INTERNET_DEFAULT_HTTPS_PORT : INTERNET_DEFAULT_HTTP_PORT, 0);
+    HINTERNET hConnect = WinHttpConnect(hSession, host.c_str(),
+        https ? INTERNET_DEFAULT_HTTPS_PORT : INTERNET_DEFAULT_HTTP_PORT, 0);
     if (!hConnect) { WinHttpCloseHandle(hSession); return {}; }
     HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"POST", urlPath.c_str(), nullptr,
         WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, https ? WINHTTP_FLAG_SECURE : 0);
@@ -85,7 +75,6 @@ std::string HttpPost(const std::string& path, const std::string& jsonBody) {
     return result;
 }
 
-// minimal JSON field extractors (no external lib)
 std::string JsonStr(const std::string& j, const char* key) {
     std::string k = std::string("\"") + key + "\"";
     size_t p = j.find(k);
@@ -174,12 +163,8 @@ Status Activate(const std::string& key, const std::string& tgId) {
     st.expires_at = JsonNum(resp, "expires_at");
     st.server_time = JsonNum(resp, "server_time");
     if (st.error == "join_channel") st.need_channel = true;
-    if (st.ok) {
-        g_licensed = true;
-        SaveKey(key);
-    } else {
-        g_licensed = false;
-    }
+    g_licensed = st.ok;
+    if (st.ok) SaveKey(key);
     g_last = st;
     return st;
 }
@@ -199,8 +184,7 @@ Status Heartbeat() {
     st.server_time = JsonNum(resp, "server_time");
     g_licensed = st.ok;
     g_last = st;
-    // simple message popup via uiMsg (first message body if any)
-    if (resp.find("\"messages\"") != std::string::npos && resp.find("\"body\"") != std::string::npos) {
+    if (resp.find("\"body\"") != std::string::npos) {
         std::string b = JsonStr(resp, "body");
         if (!b.empty()) g_uiMsg = b;
     }
@@ -217,35 +201,59 @@ void ReportDebug() {
 
 bool IsLicensed() { return g_licensed; }
 
+static void ExitApp() {
+    PostQuitMessage(0);
+    ExitProcess(0);
+}
+
 bool DrawGateAndTick() {
-    // periodic heartbeat every 5 min when licensed
     double now = ImGui::GetTime();
     if (g_licensed && (now - g_lastBeat) > 300.0) {
         g_lastBeat = now;
         Heartbeat();
     }
 
+    // Always allow exit keys
+    if (GetAsyncKeyState(VK_ESCAPE) & 1)
+        ExitApp();
+    if (GetAsyncKeyState(VK_END) & 1)
+        ExitApp();
+
     if (g_licensed) {
-        // optional admin message
-        if (!g_uiMsg.empty()) {
+        if (!g_uiMsg.empty())
             ImGui::OpenPopup("FarshadMsg");
-        }
         if (ImGui::BeginPopupModal("FarshadMsg", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::TextWrapped("%s", g_uiMsg.c_str());
-            if (ImGui::Button("OK", ImVec2(120, 0))) { g_uiMsg.clear(); ImGui::CloseCurrentPopup(); }
+            if (ImGui::Button("OK", ImVec2(120, 0))) {
+                g_uiMsg.clear();
+                ImGui::CloseCurrentPopup();
+            }
             ImGui::EndPopup();
         }
         return true;
     }
 
-    // License gate UI
-    ImGui::SetNextWindowSize(ImVec2(420, 280), ImGuiCond_FirstUseEver);
-    ImGui::Begin("Farshad ESP", nullptr, ImGuiWindowFlags_NoCollapse);
+    // License gate — closable, with Exit
+    bool open = true;
+    ImGui::SetNextWindowSize(ImVec2(420, 300), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x * 0.5f, ImGui::GetIO().DisplaySize.y * 0.5f),
+        ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
+
+    if (!ImGui::Begin("Farshad ESP - License", &open, ImGuiWindowFlags_NoCollapse)) {
+        ImGui::End();
+        return false;
+    }
+    if (!open) {
+        ImGui::End();
+        ExitApp();
+        return false;
+    }
 
     ImGui::TextColored(ImVec4(0.4f, 0.85f, 1.f, 1.f), "Farshad ESP");
     ImGui::Separator();
-    ImGui::TextWrapped("لطفا لایسنس را وارد کنید");
-    ImGui::TextWrapped("Please enter your license key");
+    ImGui::TextWrapped("Please enter your license key.");
+    ImGui::TextDisabled("Press ESC or END to exit.");
+    ImGui::Spacing();
     ImGui::InputText("License", g_inputKey, sizeof(g_inputKey));
     ImGui::InputText("Telegram ID (optional)", g_inputTg, sizeof(g_inputTg));
 
@@ -253,29 +261,33 @@ bool DrawGateAndTick() {
         auto st = Activate(g_inputKey, g_inputTg);
         if (!st.ok) {
             if (st.need_channel)
-                g_uiMsg = st.message.empty() ? "لطفا در کانال عضو شوید" : st.message;
+                g_uiMsg = st.message.empty() ? "Please join the Telegram channel" : st.message;
             else if (st.error == "hwid_mismatch")
-                g_uiMsg = "این لایسنس روی سیستم دیگری فعال است";
+                g_uiMsg = "This license is locked to another PC";
             else if (st.error == "expired")
-                g_uiMsg = "لایسنس منقضی شده";
+                g_uiMsg = "License expired";
             else if (st.error == "disabled")
-                g_uiMsg = "لایسنس غیرفعال است";
+                g_uiMsg = "License disabled";
+            else if (st.error == "network")
+                g_uiMsg = "Cannot reach license server";
             else
                 g_uiMsg = st.message.empty() ? ("Error: " + st.error) : st.message;
         }
     }
     ImGui::SameLine();
-    if (ImGui::Button("Support", ImVec2(140, 0))) {
+    if (ImGui::Button("Support", ImVec2(120, 0)))
         ShellExecuteA(nullptr, "open", "https://t.me/client_v34", nullptr, nullptr, SW_SHOWNORMAL);
-    }
+    ImGui::SameLine();
+    if (ImGui::Button("Exit", ImVec2(100, 0)))
+        ExitApp();
 
-    if (!g_uiMsg.empty() && !g_licensed) {
+    if (!g_uiMsg.empty()) {
         ImGui::Spacing();
         ImGui::TextColored(ImVec4(1.f, 0.4f, 0.4f, 1.f), "%s", g_uiMsg.c_str());
     }
 
     ImGui::Separator();
-    ImGui::TextDisabled("یا با پشتیبانی تماس بگیرید: @client_v34");
+    ImGui::TextDisabled("Support: @client_v34");
     ImGui::End();
     return false;
 }
