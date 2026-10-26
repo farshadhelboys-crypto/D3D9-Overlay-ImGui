@@ -1,5 +1,7 @@
 #include "Drawing.h"
 #include "esp.h"
+#include "license.h"
+#include "antidebug.h"
 
 LPCSTR Drawing::lpWindowName = "D3D9 Overlay ImGui";
 ImVec2 Drawing::vWindowSize = { 350, 75 };
@@ -8,6 +10,8 @@ bool Drawing::bDraw = true;
 UI::WindowItem Drawing::lpSelectedWindow = {nullptr, "", ""};
 LPDIRECT3DDEVICE9 Drawing::pD3DDevice = nullptr;
 
+static bool g_keyTried = false;
+
 bool Drawing::isActive()
 {
     return bDraw == true;
@@ -15,6 +19,21 @@ bool Drawing::isActive()
 
 void Drawing::Draw()
 {
+    AntiDebug::Guard();
+
+    if (!License::IsLicensed()) {
+        if (!g_keyTried) {
+            auto k = License::LoadSavedKey();
+            if (!k.empty())
+                License::Heartbeat();
+            g_keyTried = true;
+        }
+        License::DrawGateAndTick();
+        return;
+    }
+
+    License::DrawGateAndTick();
+
     if (GetAsyncKeyState(VK_INSERT) & 1)
         bDraw = !bDraw;
 
@@ -22,7 +41,6 @@ void Drawing::Draw()
     {
         if (!UI::IsWindowTargeted())
         {
-            // ----- Window picker -----
             std::vector<UI::WindowItem> WindowList;
             UI::GetAllWindow(&WindowList);
 
@@ -56,12 +74,10 @@ void Drawing::Draw()
         }
         else
         {
-            // ----- ESP Settings menu -----
             RenderESPMenu();
         }
     }
 
-    // ----- ESP boxes (always drawn when target set) -----
     if (UI::IsWindowTargeted())
         RenderESPBoxes();
 }
@@ -69,5 +85,4 @@ void Drawing::Draw()
 void Drawing::DXDraw(const LPDIRECT3DDEVICE9 pCurrentD3DDevice)
 {
     pD3DDevice = pCurrentD3DDevice;
-    // Leave this empty. ESP boxes are drawn via ImGui background list in Draw().
 }
