@@ -20,6 +20,8 @@ namespace License {
     void SaveKey(const std::string& key);
 
     Status Activate(const std::string& key, const std::string& tgId = "");
+    // One-time channel+license check at app start
+    Status ActivateSaved();
     Status Heartbeat();
 
     void ReportDebug();

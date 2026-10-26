@@ -23,9 +23,10 @@ void Drawing::Draw()
 
     if (!License::IsLicensed()) {
         if (!g_keyTried) {
+            // Channel membership checked once at startup via Activate
             auto k = License::LoadSavedKey();
             if (!k.empty())
-                License::Heartbeat();
+                License::ActivateSaved();
             g_keyTried = true;
         }
         License::DrawGateAndTick();
