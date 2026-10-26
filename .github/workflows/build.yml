@@ -71,7 +71,7 @@ jobs:
           $xml = Get-Content $vcx -Raw
           $xml = $xml.Replace('$(DXSDK_DIR)Include;', "$env:UM_INC;$env:SHARED_INC;")
 
-          $deps = "$env:D3D9_LIB;shell32.lib;dwmapi.lib;%(AdditionalDependencies)"
+          $deps = "$env:D3D9_LIB;shell32.lib;dwmapi.lib;winhttp.lib;%(AdditionalDependencies)"
           $xml = [regex]::Replace($xml,
             '<AdditionalDependencies>[\s\S]*?</AdditionalDependencies>',
             "<AdditionalDependencies>$deps</AdditionalDependencies>")
