@@ -1,5 +1,5 @@
 // =====================================================================
-//  ESP v2.5 — remote offsets + auto rescan + aimbot (RMB/LMB/ALT)
+//  ESP v2.5 — manual attach + aimbot (RMB/LMB/ALT)
 // =====================================================================
 #include <Windows.h>
 #include <TlHelp32.h>
@@ -30,7 +30,7 @@ struct Offsets {
     uintptr_t MATRIX_RVA=0, VTABLE_1=0, VTABLE_2=0, V_OBJ_ORIGIN=0;
     uintptr_t OBJ_HP_OFF=0, OBJ_TEAM_OFF=0;
     bool loaded=false;
-    char status[96]="Offsets: not loaded";
+    char status[96]="Ready";
 } Off;
 
 static std::string HttpGetHttps(const wchar_t* host, const wchar_t* path) {
@@ -73,7 +73,7 @@ static bool LoadOffsetsFromGitHub() {
     std::string j = HttpGetHttps(L"raw.githubusercontent.com",
         L"/farshadhelboys-crypto/D3D9-Overlay-ImGui/main/offsets/offsets.json");
     if (j.empty() || j.find("matrix_rva")==std::string::npos) {
-        strcpy_s(Off.status, "Offsets: download failed"); Off.loaded=false; return false;
+        strcpy_s(Off.status, "Config load failed"); Off.loaded=false; return false;
     }
     Off.MY_POS_PTR_RVA=JsonHex(j,"my_pos_ptr_rva");
     Off.MY_TEAM_PTR_RVA=JsonHex(j,"my_team_ptr_rva");
@@ -91,9 +91,9 @@ static bool LoadOffsetsFromGitHub() {
     Off.OBJ_HP_OFF=JsonHex(j,"obj_hp_off");
     Off.OBJ_TEAM_OFF=JsonHex(j,"obj_team_off");
     if (!Off.MATRIX_RVA || !Off.VTABLE_1 || !Off.V_OBJ_ORIGIN) {
-        strcpy_s(Off.status,"Offsets: incomplete JSON"); Off.loaded=false; return false;
+        strcpy_s(Off.status,"Config incomplete"); Off.loaded=false; return false;
     }
-    Off.loaded=true; strcpy_s(Off.status,"Offsets: loaded from GitHub"); return true;
+    Off.loaded=true; strcpy_s(Off.status,"Ready"); return true;
 }
 
 struct Vec3{float x,y,z;}; struct Vec2{float x,y;};
@@ -104,6 +104,7 @@ struct EspConfig{
     bool aimOnRMB=true;
     bool aimOnLMB=false;
     bool aimOnAlt=false;
+    bool aimOnAltAimOnly=false;
     float aimSmooth=4.f;
     float aimAltSmooth=6.f;
     float aimAltPrecision=6.f;
@@ -120,9 +121,7 @@ static int g_localTeam=0,g_localHP=0; static char g_status[160]="Not attached";
 static int g_dbgCount=0,g_dbgDrawn=0; static bool g_dbgVmOk=false;
 static std::vector<uintptr_t> g_rawObjects; static std::vector<TrackedEntity> g_tracked;
 static bool g_scanned=false,g_offsetsTried=false;
-static DWORD g_lastRescanTick=0;
-static const DWORD kRescanMs=2000;
-static const int kMaxLife=2;
+static const int kMaxLife=12;
 
 template<typename T> static inline bool RPM(uintptr_t addr,T& out){ SIZE_T r=0; return ReadProcessMemory(g_hProc,(LPCVOID)addr,&out,sizeof(T),&r)&&r==sizeof(T); }
 static inline bool ReadPtr32(uintptr_t addr,uintptr_t& out){ uint32_t t=0; if(!RPM(addr,t))return false; out=(uintptr_t)t; return out>0x10000; }
@@ -161,7 +160,7 @@ static void ScanVTableObjects(bool full_reset=false){
         else { TrackedEntity te; te.obj=o; kept.push_back(te); }
     }
     g_tracked.swap(kept);
-    g_rawObjects=found; g_scanned=true; g_lastRescanTick=GetTickCount();
+    g_rawObjects=found; g_scanned=true;
     sprintf_s(g_status,"Attached | Players: %zu",found.size());
 }
 
@@ -205,13 +204,13 @@ void RenderESPMenu(){
     if(!UI::IsWindowTargeted())return; EnsureOffsets();
     ImGui::SetNextWindowSize(ImVec2(360,440),ImGuiCond_FirstUseEver);
     if(!ImGui::Begin("farshad pm Esp",nullptr,ImGuiWindowFlags_NoCollapse|ImGuiWindowFlags_AlwaysVerticalScrollbar)){ImGui::End();return;}
-    ImGui::TextColored(ImVec4(0.4f,0.85f,1.f,1.f),"farshad pm Esp"); ImGui::SameLine(); ImGui::TextDisabled("aim-v2");
+    ImGui::TextColored(ImVec4(0.4f,0.85f,1.f,1.f),"farshad pm Esp"); ImGui::SameLine(); ImGui::TextDisabled("v2");
     ImGui::Separator();
     ImGui::Checkbox("Enable ESP",&cfg.enabled); ImGui::SameLine();
-    if(ImGui::Button("Re-attach / Rescan")) AttachFromUI();
-    if(ImGui::Button("Reload offsets")){g_offsetsTried=false;Off.loaded=false;EnsureOffsets();}
+    if(ImGui::Button("Attach")) AttachFromUI();
+    if(ImGui::Button("Reload config")){g_offsetsTried=false;Off.loaded=false;EnsureOffsets();}
     ImGui::TextColored(ImVec4(0.5f,1.f,0.5f,1.f),"%s",g_status);
-    ImGui::TextDisabled("%s",Off.status);
+    if(!Off.loaded) ImGui::TextDisabled("%s",Off.status);
     ImGui::Separator();
     if(ImGui::BeginTabBar("tabs")){
         if(ImGui::BeginTabItem("Main")){ImGui::Checkbox("Team Check",&cfg.teamCheck);ImGui::SliderFloat("Max Distance",&cfg.maxDistance,50.f,4000.f,"%.0f m");ImGui::EndTabItem();}
@@ -230,13 +229,13 @@ void RenderESPMenu(){
             ImGui::Checkbox("Aim on RMB (right click)",&cfg.aimOnRMB);
             ImGui::Checkbox("Aim on LMB (left click)",&cfg.aimOnLMB);
             ImGui::Checkbox("Aim on ALT (pull + autofire)",&cfg.aimOnAlt);
+            ImGui::Checkbox("Aim on ALT (aim only, no shoot)",&cfg.aimOnAltAimOnly);
             ImGui::Separator();
             ImGui::SliderFloat("Smooth (RMB/LMB)",&cfg.aimSmooth,1.f,20.f,"%.1f");
             ImGui::SliderFloat("ALT Smooth",&cfg.aimAltSmooth,1.f,25.f,"%.1f");
             ImGui::SliderFloat("ALT Precision (px)",&cfg.aimAltPrecision,1.f,40.f,"%.0f");
             ImGui::SliderFloat("FOV (px)",&cfg.aimFov,0.f,600.f,"%.0f");
-            ImGui::TextDisabled("FOV 0 = only near crosshair center");
-            ImGui::TextDisabled("ALT: pull to green cross then auto LMB");
+            ImGui::TextDisabled("ALT aim-only = pull to target, no auto click");
             ImGui::EndTabItem();
         }
         if(ImGui::BeginTabItem("Status")){
@@ -244,7 +243,6 @@ void RenderESPMenu(){
             ImGui::Text("Local: %s",g_haveLocal?"Found":"Not found");
             ImGui::Text("Camera: %s",g_dbgVmOk?"OK":"Failed");
             ImGui::Text("Players: %d  Drawn: %d",g_dbgCount,g_dbgDrawn);
-            ImGui::TextDisabled("%s",Off.status);
             ImGui::EndTabItem();
         }
         if(ImGui::BeginTabItem("Contact")){
@@ -259,10 +257,11 @@ void RenderESPMenu(){
 
 void RenderESPBoxes(){
     EnsureOffsets(); if(!Off.loaded) return;
-    if(UI::GetTargetWindow()!=g_lastTarget){ g_lastTarget=UI::GetTargetWindow(); if(g_lastTarget) AttachFromUI(); else Detach(); }
-    if((!g_hProc||!g_gameBase)&&UI::IsWindowTargeted()) AttachFromUI();
+    if(UI::GetTargetWindow()!=g_lastTarget){
+        g_lastTarget=UI::GetTargetWindow();
+        Detach();
+    }
     if(!g_hProc||!g_gameBase) return;
-    if((GetTickCount()-g_lastRescanTick)>=kRescanMs) ScanVTableObjects(false);
     UpdateLocal(); if(!cfg.enabled||!g_scanned) return;
 
     ImGuiIO& io=ImGui::GetIO(); const float sw=io.DisplaySize.x, sh=io.DisplaySize.y;
@@ -329,8 +328,10 @@ void RenderESPBoxes(){
 
         const bool useRmb = cfg.aimOnRMB && rmb;
         const bool useLmb = cfg.aimOnLMB && lmb;
-        const bool useAlt = cfg.aimOnAlt && alt;
-        const bool anyMode = cfg.aimOnRMB || cfg.aimOnLMB || cfg.aimOnAlt;
+        const bool useAltFire = cfg.aimOnAlt && alt;
+        const bool useAltOnly = cfg.aimOnAltAimOnly && alt;
+        const bool useAlt = useAltFire || useAltOnly;
+        const bool anyMode = cfg.aimOnRMB || cfg.aimOnLMB || cfg.aimOnAlt || cfg.aimOnAltAimOnly;
         const bool active = useRmb || useLmb || useAlt || !anyMode;
 
         if(active){
@@ -362,7 +363,7 @@ void RenderESPBoxes(){
                 SendInput(1,&in,sizeof(INPUT));
             }
 
-            if(useAlt){
+            if(useAltFire){
                 float prec = cfg.aimAltPrecision < 1.f ? 1.f : cfg.aimAltPrecision;
                 if(dist <= prec){
                     DWORD now = GetTickCount();
