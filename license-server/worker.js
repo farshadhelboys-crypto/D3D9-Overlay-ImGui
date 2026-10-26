@@ -1,18 +1,6 @@
 /**
  * Farshad ESP — Cloudflare Worker + KV License API
- *
- * Endpoints:
- *  POST /api/activate   { key, hwid, tg_id? }
- *  POST /api/heartbeat  { key, hwid }
- *  POST /api/report_debug { key, hwid }
- *  GET  /api/time
- *  GET  /api/offsets
- *  Admin (header X-Admin-Key):
- *    GET  /admin/list
- *    POST /admin/create  { days, note?, max_hwid? }
- *    POST /admin/disable { key, reason? }
- *    POST /admin/message { key?|broadcast, title, body }
- *    GET  /admin/stats
+ * Fixed admin panel (no nested backticks)
  */
 
 const OFFSETS_URL = "https://raw.githubusercontent.com/farshadhelboys-crypto/D3D9-Overlay-ImGui/main/offsets/offsets.json";
@@ -56,13 +44,14 @@ export default {
 
       if (path === "/api/messages" && request.method === "POST") {
         const body = await request.json();
-        return json(await pullMessages(env, body), cors);
+        return json(await heartbeat(env, body), cors);
       }
 
-      // Admin
       if (path.startsWith("/admin")) {
         const key = request.headers.get("X-Admin-Key") || "";
-        if (key !== env.ADMIN_KEY) return json({ ok: false, error: "unauthorized" }, cors, 401);
+        if (!env.ADMIN_KEY || key !== env.ADMIN_KEY) {
+          return json({ ok: false, error: "unauthorized" }, cors, 401);
+        }
 
         if (path === "/admin/list" && request.method === "GET") {
           return json(await listLicenses(env), cors);
@@ -82,16 +71,18 @@ export default {
           const body = await request.json();
           return json(await sendMessage(env, body), cors);
         }
+        return json({ ok: false, error: "not found" }, cors, 404);
       }
 
-      // Admin panel static
-      if (path === "/" || path === "/admin") {
-        return new Response(ADMIN_HTML, { headers: { ...cors, "Content-Type": "text/html; charset=utf-8" } });
+      if (path === "/" || path === "/admin" || path === "/index.html") {
+        return new Response(ADMIN_HTML, {
+          headers: { ...cors, "Content-Type": "text/html; charset=utf-8" },
+        });
       }
 
       return json({ ok: false, error: "not found" }, cors, 404);
     } catch (e) {
-      return json({ ok: false, error: String(e) }, cors, 500);
+      return json({ ok: false, error: String(e && e.message ? e.message : e) }, cors, 500);
     }
   },
 };
@@ -105,26 +96,38 @@ function json(obj, cors = {}, status = 200) {
 
 function genKey() {
   const a = crypto.getRandomValues(new Uint8Array(8));
-  return Array.from(a, (b) => b.toString(16).padStart(2, "0")).join("").toUpperCase().replace(/(.{4})/g, "$1-").slice(0, -1);
+  return Array.from(a, (b) => b.toString(16).padStart(2, "0"))
+    .join("")
+    .toUpperCase()
+    .replace(/(.{4})/g, "$1-")
+    .slice(0, -1);
 }
 
 async function getLic(env, key) {
-  const raw = await env.KV.get(`lic:${key}`);
+  const raw = await env.KV.get("lic:" + key);
   return raw ? JSON.parse(raw) : null;
 }
 async function putLic(env, key, data) {
-  await env.KV.put(`lic:${key}`, JSON.stringify(data));
+  await env.KV.put("lic:" + key, JSON.stringify(data));
 }
 
 async function telegramMember(env, tgId) {
-  if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHANNEL_ID || !tgId) return { ok: true, skipped: true };
-  const url = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getChatMember?chat_id=${encodeURIComponent(env.TELEGRAM_CHANNEL_ID)}&user_id=${encodeURIComponent(tgId)}`;
+  if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHANNEL_ID || !tgId) {
+    return { ok: true, skipped: true };
+  }
+  const url =
+    "https://api.telegram.org/bot" +
+    env.TELEGRAM_BOT_TOKEN +
+    "/getChatMember?chat_id=" +
+    encodeURIComponent(env.TELEGRAM_CHANNEL_ID) +
+    "&user_id=" +
+    encodeURIComponent(tgId);
   const r = await fetch(url);
   const j = await r.json();
   if (!j.ok) return { ok: false, error: "telegram_api" };
   const st = j.result && j.result.status;
   const ok = st === "member" || st === "administrator" || st === "creator";
-  return { ok, status: st };
+  return { ok: ok, status: st };
 }
 
 async function activate(env, body) {
@@ -140,14 +143,12 @@ async function activate(env, body) {
   const now = Math.floor(Date.now() / 1000);
   if (lic.expires_at && now > lic.expires_at) return { ok: false, error: "expired" };
 
-  // Telegram channel
-  if (env.TELEGRAM_CHANNEL_ID) {
+  if (env.TELEGRAM_CHANNEL_ID && env.TELEGRAM_BOT_TOKEN) {
     if (!tgId) return { ok: false, error: "join_channel", message: "لطفا در کانال عضو شوید" };
     const mem = await telegramMember(env, tgId);
     if (!mem.ok) return { ok: false, error: "join_channel", message: "لطفا در کانال عضو شوید" };
   }
 
-  // HWID bind — one machine
   if (lic.hwid && lic.hwid !== hwid) {
     return { ok: false, error: "hwid_mismatch", message: "این لایسنس روی سیستم دیگری فعال است" };
   }
@@ -203,32 +204,28 @@ async function reportDebug(env, body) {
   return { ok: true, disabled: true };
 }
 
-async function pullMessages(env, body) {
-  return heartbeat(env, body);
-}
-
 async function createLicense(env, body) {
+  if (!env.KV) return { ok: false, error: "KV not bound" };
   const days = Number(body.days) || 30;
   const note = body.note || "";
   const key = (body.key || genKey()).toUpperCase();
   const now = Math.floor(Date.now() / 1000);
   const lic = {
-    key,
+    key: key,
     created_at: now,
     expires_at: now + days * 86400,
     hwid: null,
     tg_id: null,
     disabled: false,
     disable_reason: null,
-    note,
+    note: note,
     last_seen: null,
     pending_messages: [],
   };
   await putLic(env, key, lic);
-  // index
   const idxRaw = await env.KV.get("idx:keys");
   const idx = idxRaw ? JSON.parse(idxRaw) : [];
-  if (!idx.includes(key)) idx.push(key);
+  if (idx.indexOf(key) === -1) idx.push(key);
   await env.KV.put("idx:keys", JSON.stringify(idx));
   return { ok: true, license: lic };
 }
@@ -247,12 +244,13 @@ async function disableLicense(env, body) {
 async function sendMessage(env, body) {
   const title = body.title || "پیام";
   const text = body.body || body.text || "";
-  const msg = { id: Date.now(), title, body: text, ts: Math.floor(Date.now() / 1000) };
+  const msg = { id: Date.now(), title: title, body: text, ts: Math.floor(Date.now() / 1000) };
   const idxRaw = await env.KV.get("idx:keys");
   const idx = idxRaw ? JSON.parse(idxRaw) : [];
 
   if (body.broadcast) {
-    for (const k of idx) {
+    for (let i = 0; i < idx.length; i++) {
+      const k = idx[i];
       const lic = await getLic(env, k);
       if (!lic || lic.disabled) continue;
       lic.pending_messages = lic.pending_messages || [];
@@ -272,15 +270,24 @@ async function sendMessage(env, body) {
 }
 
 async function listLicenses(env) {
+  if (!env.KV) return { ok: false, error: "KV not bound", licenses: [] };
   const idxRaw = await env.KV.get("idx:keys");
   const idx = idxRaw ? JSON.parse(idxRaw) : [];
   const now = Math.floor(Date.now() / 1000);
   const list = [];
-  for (const k of idx) {
-    const lic = await getLic(env, k);
+  for (let i = 0; i < idx.length; i++) {
+    const lic = await getLic(env, idx[i]);
     if (!lic) continue;
     list.push({
-      ...lic,
+      key: lic.key,
+      created_at: lic.created_at,
+      expires_at: lic.expires_at,
+      hwid: lic.hwid,
+      tg_id: lic.tg_id,
+      disabled: !!lic.disabled,
+      disable_reason: lic.disable_reason,
+      note: lic.note,
+      last_seen: lic.last_seen,
       days_left: lic.expires_at ? Math.max(0, Math.floor((lic.expires_at - now) / 86400)) : null,
       active: !lic.disabled && (!lic.expires_at || lic.expires_at > now),
     });
@@ -290,94 +297,122 @@ async function listLicenses(env) {
 
 async function stats(env) {
   const data = await listLicenses(env);
+  if (!data.ok) return data;
   let active = 0, disabled = 0, expired = 0;
-  for (const l of data.licenses) {
+  for (let i = 0; i < data.licenses.length; i++) {
+    const l = data.licenses[i];
     if (l.disabled) disabled++;
     else if (l.active) active++;
     else expired++;
   }
-  return { ok: true, total: data.licenses.length, active, disabled, expired, server_time: data.server_time };
+  return {
+    ok: true,
+    total: data.licenses.length,
+    active: active,
+    disabled: disabled,
+    expired: expired,
+    server_time: data.server_time,
+  };
 }
 
-const ADMIN_HTML = `<!DOCTYPE html>
-<html lang="fa" dir="rtl">
-<head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Farshad ESP Admin</title>
-<style>
-body{font-family:Tahoma,sans-serif;background:#111;color:#eee;margin:0;padding:16px}
-input,button,textarea,select{font:inherit;padding:8px;margin:4px 0;border-radius:6px;border:1px solid #333;background:#1a1a1a;color:#eee}
-button{background:#0af;color:#000;cursor:pointer;border:none;font-weight:bold}
-button.danger{background:#e33;color:#fff}
-.card{background:#1a1a1a;padding:12px;border-radius:10px;margin:10px 0}
-table{width:100%;border-collapse:collapse;font-size:13px}
-td,th{border:1px solid #333;padding:6px;text-align:right}
-.ok{color:#0f0}.bad{color:#f55}
-</style>
-</head>
-<body>
-<h1>Farshad ESP — پنل ادمین</h1>
-<div class="card">
-  <label>Admin Key</label><br/>
-  <input id="akey" type="password" style="width:280px" placeholder="ADMIN_KEY"/>
-  <button onclick="loadAll()">ورود / رفرش</button>
-</div>
-<div class="card" id="stats">—</div>
-<div class="card">
-  <h3>ساخت لایسنس</h3>
-  روز: <input id="days" type="number" value="30" style="width:80px"/>
-  یادداشت: <input id="note" style="width:200px"/>
-  <button onclick="createLic()">بساز</button>
-  <pre id="created"></pre>
-</div>
-<div class="card">
-  <h3>ارسال پیام</h3>
-  کلید (خالی=همه): <input id="mkey" style="width:200px"/>
-  عنوان: <input id="mtitle" value="پیام مدیریت"/>
-  متن: <textarea id="mbody" rows="3" style="width:100%"></textarea>
-  <button onclick="sendMsg(false)">ارسال به کلید</button>
-  <button onclick="sendMsg(true)">ارسال به همه</button>
-</div>
-<div class="card">
-  <h3>لایسنس‌ها</h3>
-  <div id="list"></div>
-</div>
-<script>
-const api = location.origin;
-function headers(){return {"Content-Type":"application/json","X-Admin-Key":document.getElementById("akey").value}}
-async function loadAll(){
-  const s = await fetch(api+"/admin/stats",{headers:headers()}).then(r=>r.json());
-  document.getElementById("stats").innerHTML = s.ok
-    ? `کل: ${s.total} | فعال: <span class="ok">${s.active}</span> | غیرفعال: <span class="bad">${s.disabled}</span> | منقضی: ${s.expired}`
-    : JSON.stringify(s);
-  const l = await fetch(api+"/admin/list",{headers:headers()}).then(r=>r.json());
-  if(!l.ok){document.getElementById("list").textContent=JSON.stringify(l);return;}
-  let h = "<table><tr><th>کلید</th><th>وضعیت</th><th>روز مانده</th><th>HWID</th><th>دلیل</th><th></th></tr>";
-  for(const x of l.licenses){
-    const st = x.disabled?"غیرفعال":(x.active?"فعال":"منقضی");
-    h += `<tr><td>${x.key}</td><td>${st}</td><td>${x.days_left??"-"}</td><td>${(x.hwid||"-").slice(0,12)}</td><td>${x.disable_reason||x.note||""}</td>
-    <td><button class="danger" onclick="dis('${x.key}')">غیرفعال</button></td></tr>`;
-  }
-  h += "</table>";
-  document.getElementById("list").innerHTML = h;
-}
-async function createLic(){
-  const days = +document.getElementById("days").value;
-  const note = document.getElementById("note").value;
-  const j = await fetch(api+"/admin/create",{method:"POST",headers:headers(),body:JSON.stringify({days,note})}).then(r=>r.json());
-  document.getElementById("created").textContent = j.ok ? ("KEY: "+j.license.key+"\nexpires: "+new Date(j.license.expires_at*1000).toLocaleString()) : JSON.stringify(j);
-  loadAll();
-}
-async function dis(key){
-  if(!confirm("غیرفعال؟"))return;
-  await fetch(api+"/admin/disable",{method:"POST",headers:headers(),body:JSON.stringify({key,reason:"admin_disabled"})});
-  loadAll();
-}
-async function sendMsg(broadcast){
-  const body = {broadcast, key:document.getElementById("mkey").value, title:document.getElementById("mtitle").value, body:document.getElementById("mbody").value};
-  const j = await fetch(api+"/admin/message",{method:"POST",headers:headers(),body:JSON.stringify(body)}).then(r=>r.json());
-  alert(JSON.stringify(j));
-}
-</script>
-</body></html>`;
+const ADMIN_HTML = "<!DOCTYPE html>\n" +
+"<html lang=\"fa\" dir=\"rtl\">\n" +
+"<head>\n" +
+"<meta charset=\"utf-8\"/>\n" +
+"<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"/>\n" +
+"<title>Farshad ESP Admin</title>\n" +
+"<style>\n" +
+"body{font-family:Tahoma,sans-serif;background:#111;color:#eee;margin:0;padding:16px}\n" +
+"input,button,textarea{font:inherit;padding:8px;margin:4px 0;border-radius:6px;border:1px solid #333;background:#1a1a1a;color:#eee}\n" +
+"button{background:#0af;color:#000;cursor:pointer;border:none;font-weight:bold}\n" +
+"button.danger{background:#e33;color:#fff}\n" +
+".card{background:#1a1a1a;padding:12px;border-radius:10px;margin:10px 0}\n" +
+"table{width:100%;border-collapse:collapse;font-size:13px}\n" +
+"td,th{border:1px solid #333;padding:6px;text-align:right}\n" +
+".ok{color:#0f0}.bad{color:#f55}\n" +
+"#err{color:#f55;min-height:1.2em}\n" +
+"</style>\n" +
+"</head>\n" +
+"<body>\n" +
+"<h1>Farshad ESP — پنل ادمین</h1>\n" +
+"<div class=\"card\">\n" +
+"  <label>Admin Key</label><br/>\n" +
+"  <input id=\"akey\" type=\"password\" style=\"width:280px\" placeholder=\"ADMIN_KEY\"/>\n" +
+"  <button type=\"button\" onclick=\"loadAll()\">ورود / رفرش</button>\n" +
+"  <div id=\"err\"></div>\n" +
+"</div>\n" +
+"<div class=\"card\" id=\"stats\">—</div>\n" +
+"<div class=\"card\">\n" +
+"  <h3>ساخت لایسنس</h3>\n" +
+"  روز: <input id=\"days\" type=\"number\" value=\"30\" style=\"width:80px\"/>\n" +
+"  یادداشت: <input id=\"note\" style=\"width:200px\"/>\n" +
+"  <button type=\"button\" onclick=\"createLic()\">بساز</button>\n" +
+"  <pre id=\"created\"></pre>\n" +
+"</div>\n" +
+"<div class=\"card\">\n" +
+"  <h3>ارسال پیام</h3>\n" +
+"  کلید (خالی=همه): <input id=\"mkey\" style=\"width:200px\"/>\n" +
+"  عنوان: <input id=\"mtitle\" value=\"پیام مدیریت\"/>\n" +
+"  متن: <textarea id=\"mbody\" rows=\"3\" style=\"width:100%\"></textarea>\n" +
+"  <button type=\"button\" onclick=\"sendMsg(false)\">ارسال به کلید</button>\n" +
+"  <button type=\"button\" onclick=\"sendMsg(true)\">ارسال به همه</button>\n" +
+"</div>\n" +
+"<div class=\"card\">\n" +
+"  <h3>لایسنس‌ها</h3>\n" +
+"  <div id=\"list\"></div>\n" +
+"</div>\n" +
+"<script>\n" +
+"var api = location.origin;\n" +
+"function headers(){return {'Content-Type':'application/json','X-Admin-Key':document.getElementById('akey').value};}\n" +
+"function showErr(m){document.getElementById('err').textContent=m||'';}\n" +
+"async function loadAll(){\n" +
+"  showErr('');\n" +
+"  try {\n" +
+"    var s = await fetch(api+'/admin/stats',{headers:headers()}).then(function(r){return r.json();});\n" +
+"    if(!s.ok){ showErr('خطا: '+(s.error||JSON.stringify(s))); document.getElementById('stats').textContent='—'; return; }\n" +
+"    document.getElementById('stats').innerHTML = 'کل: '+s.total+' | فعال: <span class=\"ok\">'+s.active+'</span> | غیرفعال: <span class=\"bad\">'+s.disabled+'</span> | منقضی: '+s.expired;\n" +
+"    var l = await fetch(api+'/admin/list',{headers:headers()}).then(function(r){return r.json();});\n" +
+"    if(!l.ok){ document.getElementById('list').textContent=JSON.stringify(l); return; }\n" +
+"    var h = '<table><tr><th>کلید</th><th>وضعیت</th><th>روز مانده</th><th>HWID</th><th>دلیل</th><th></th></tr>';\n" +
+"    for(var i=0;i<l.licenses.length;i++){\n" +
+"      var x=l.licenses[i];\n" +
+"      var st=x.disabled?'غیرفعال':(x.active?'فعال':'منقضی');\n" +
+"      var hw=(x.hwid||'-'); if(hw.length>12) hw=hw.slice(0,12);\n" +
+"      h += '<tr><td>'+x.key+'</td><td>'+st+'</td><td>'+(x.days_left!=null?x.days_left:'-')+'</td><td>'+hw+'</td><td>'+(x.disable_reason||x.note||'')+'</td>';\n" +
+"      h += '<td><button type=\"button\" class=\"danger\" onclick=\"dis(\\''+x.key+'\\')\">غیرفعال</button></td></tr>';\n" +
+"    }\n" +
+"    h += '</table>';\n" +
+"    document.getElementById('list').innerHTML = h;\n" +
+"  } catch(e){ showErr('شبکه/خطا: '+e); }\n" +
+"}\n" +
+"async function createLic(){\n" +
+"  showErr('');\n" +
+"  try {\n" +
+"    var days = +document.getElementById('days').value;\n" +
+"    var note = document.getElementById('note').value;\n" +
+"    var j = await fetch(api+'/admin/create',{method:'POST',headers:headers(),body:JSON.stringify({days:days,note:note})}).then(function(r){return r.json();});\n" +
+"    if(j.ok){\n" +
+"      document.getElementById('created').textContent = 'KEY: '+j.license.key+'\\nexpires: '+new Date(j.license.expires_at*1000).toLocaleString();\n" +
+"      loadAll();\n" +
+"    } else {\n" +
+"      document.getElementById('created').textContent = JSON.stringify(j);\n" +
+"      showErr(j.error||'create failed');\n" +
+"    }\n" +
+"  } catch(e){ showErr('شبکه/خطا: '+e); }\n" +
+"}\n" +
+"async function dis(key){\n" +
+"  if(!confirm('غیرفعال؟')) return;\n" +
+"  try {\n" +
+"    await fetch(api+'/admin/disable',{method:'POST',headers:headers(),body:JSON.stringify({key:key,reason:'admin_disabled'})});\n" +
+"    loadAll();\n" +
+"  } catch(e){ showErr(''+e); }\n" +
+"}\n" +
+"async function sendMsg(broadcast){\n" +
+"  try {\n" +
+"    var body = {broadcast:broadcast, key:document.getElementById('mkey').value, title:document.getElementById('mtitle').value, body:document.getElementById('mbody').value};\n" +
+"    var j = await fetch(api+'/admin/message',{method:'POST',headers:headers(),body:JSON.stringify(body)}).then(function(r){return r.json();});\n" +
+"    alert(JSON.stringify(j));\n" +
+"  } catch(e){ alert(''+e); }\n" +
+"}\n" +
+"</script>\n" +
+"</body></html>\n";
