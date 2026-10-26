@@ -15,11 +15,9 @@ bool NtDebuggerPresent() {
     auto NtQueryInformationProcess = (pNtQIP)GetProcAddress(ntdll, "NtQueryInformationProcess");
     if (!NtQueryInformationProcess) return false;
     DWORD debugPort = 0;
-    // ProcessDebugPort = 7
     NTSTATUS st = NtQueryInformationProcess(GetCurrentProcess(), 7, &debugPort, sizeof(debugPort), nullptr);
     if (st == 0 && debugPort != 0) return true;
     DWORD debugFlags = 0;
-    // ProcessDebugFlags = 31
     st = NtQueryInformationProcess(GetCurrentProcess(), 31, &debugFlags, sizeof(debugFlags), nullptr);
     if (st == 0 && debugFlags == 0) return true;
     return false;
@@ -32,7 +30,7 @@ bool PebBeingDebugged() {
     BYTE* peb = (BYTE*)__readfsdword(0x30);
 #endif
     if (!peb) return false;
-    return peb[2] != 0; // BeingDebugged
+    return peb[2] != 0;
 }
 
 bool FindBadProcess() {
@@ -42,7 +40,7 @@ bool FindBadProcess() {
         L"procmon", L"wireshark", L"fiddler", L"httpdebugger",
         L"dnspy", L"ghidra", L"scylla", L"petool", L"importrec",
         L"reclass", L"extreme injector", L"ksdumper", L"x96dbg",
-        L"hxd", L"die.exe", L"detect it easy", L"apimonitor"
+        L"apimonitor"
     };
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snap == INVALID_HANDLE_VALUE) return false;
@@ -89,11 +87,9 @@ bool FindBadModule() {
 
 bool Detected() {
     if (IsDebuggerPresent()) return true;
-
     BOOL remote = FALSE;
     if (CheckRemoteDebuggerPresent(GetCurrentProcess(), &remote) && remote)
         return true;
-
     if (PebBeingDebugged()) return true;
     if (NtDebuggerPresent()) return true;
     if (FindBadProcess()) return true;
@@ -102,7 +98,6 @@ bool Detected() {
 }
 
 void Guard() {
-    // throttle heavy process scan ~ every 2s via tick count
     static DWORD lastHeavy = 0;
     DWORD now = GetTickCount();
     bool heavy = (now - lastHeavy) > 2000;
@@ -126,11 +121,9 @@ void Guard() {
 
     License::ReportDebug();
     MessageBoxW(nullptr,
-        L"\x62f\x627\x62f\x627\x634 \x62f\x6cc\x628\x627\x6af \x646\x6a9\x646 \x645\x645\x646\x648\x646\x645",
+        L"Dadash debug nakon mamnoonam",
         L"Farshad ESP",
         MB_OK | MB_ICONERROR | MB_TOPMOST);
-    // Fallback ASCII message if unicode fails
-    MessageBoxA(nullptr, "Dadash debug nakon mamnoonam", "Farshad ESP", MB_OK | MB_ICONERROR | MB_TOPMOST);
     ExitProcess(0);
 }
 
