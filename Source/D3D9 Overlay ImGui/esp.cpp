@@ -1,5 +1,5 @@
 // =====================================================================
-//  ESP — manual attach + soft rescan (5s) + aimbot — esp demo
+//  ESP — manual attach + aimbot — esp demo (no soft rescan)
 // =====================================================================
 #include <Windows.h>
 #include <TlHelp32.h>
@@ -123,8 +123,6 @@ static int g_dbgCount=0,g_dbgDrawn=0; static bool g_dbgVmOk=false;
 static std::vector<uintptr_t> g_rawObjects; static std::vector<TrackedEntity> g_tracked;
 static bool g_scanned=false,g_offsetsTried=false;
 static const int kMaxLife=12;
-static DWORD g_lastSoftScan=0;
-static const DWORD kSoftScanMs=5000;
 
 template<typename T> static inline bool RPM(uintptr_t addr,T& out){ SIZE_T r=0; return ReadProcessMemory(g_hProc,(LPCVOID)addr,&out,sizeof(T),&r)&&r==sizeof(T); }
 static inline bool ReadPtr32(uintptr_t addr,uintptr_t& out){ uint32_t t=0; if(!RPM(addr,t))return false; out=(uintptr_t)t; return out>0x10000; }
@@ -178,7 +176,7 @@ static bool AttachFromUI(){
     if(!g_hProc){strcpy_s(g_status,"OpenProcess failed (run as admin)");return false;}
     g_gameBase=GetModuleBase(pid,L"clientmod_game.dll");
     if(!g_gameBase){strcpy_s(g_status,"Game module not loaded yet");CloseHandle(g_hProc);g_hProc=nullptr;return false;}
-    g_attachedPid=pid; strcpy_s(g_status,"Scanning players..."); ScanVTableObjects(true); g_lastSoftScan=GetTickCount(); return true;
+    g_attachedPid=pid; strcpy_s(g_status,"Scanning players..."); ScanVTableObjects(true); return true;
 }
 static void UpdateLocal(){
     g_haveLocal=false;g_localTeam=0;g_localHP=0; if(!g_hProc||!g_gameBase||!Off.loaded)return;
@@ -270,11 +268,6 @@ void RenderESPBoxes(){
         Detach();
     }
     if(!g_hProc||!g_gameBase) return;
-    // Soft rescan: add new players without full Detach
-    if (g_scanned && (GetTickCount() - g_lastSoftScan) >= kSoftScanMs) {
-        g_lastSoftScan = GetTickCount();
-        ScanVTableObjects(false);
-    }
     UpdateLocal(); if(!cfg.enabled||!g_scanned) return;
 
     ImGuiIO& io=ImGui::GetIO(); const float sw=io.DisplaySize.x, sh=io.DisplaySize.y;
