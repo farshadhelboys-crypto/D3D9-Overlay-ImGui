@@ -36,7 +36,7 @@ static const uintptr_t K_PLAYER_RES   = 0x2478218;
 static const uintptr_t K_RES_HP       = 0x1270;
 static const uintptr_t K_RES_TEAM     = 0x1128;
 
-// ---- Tunables (match Python) ----
+// ---- Tunables (match Python + less flicker) ----
 static const float  HEAD_OFFSET         = 72.f;
 static const float  MIN_DIST            = 80.f;
 static const float  MAX_DIST            = 5000.f;
@@ -44,7 +44,7 @@ static const float  MIN_BOX_H           = 5.f;
 static const float  MAX_BOX_H           = 1500.f;
 static const int    DEAD_STATIC_FRAMES  = 300;   // ~5s static = corpse
 static const float  POS_EPS_SQ          = 16.f;  // 4 units movement threshold
-static const int    HOLD_FRAMES         = 3;     // light anti-flicker
+static const int    HOLD_FRAMES         = 12;    // anti-flicker (was 3 — too low)
 static const int    RES_UPDATE_EVERY    = 20;
 
 struct Offsets {
@@ -189,7 +189,7 @@ void RenderESPMenu(){
     if(ImGui::Button("Attach")) AttachFromUI();
     ImGui::SameLine(); ImGui::TextDisabled("F5 = Attach/Rescan");
     ImGui::TextColored(ImVec4(0.5f,1.f,0.5f,1.f),"%s",g_status);
-    ImGui::TextDisabled("Matrix: 0x27603D0 (working)");
+    ImGui::TextDisabled("Matrix: 0x27603D0 | Hold: 12");
     ImGui::Separator();
     if(ImGui::BeginTabBar("tabs")){
         if(ImGui::BeginTabItem("Main")){
@@ -272,15 +272,17 @@ void RenderESPBoxes(){
                && RPM(te.obj+Off.V_OBJ_ORIGIN+8,origin.z);
 
         if(!ok){
-            if(te.hold>0){ te.hold--; if(te.hold>0) te.valid=true; else te.valid=false; }
+            // lost read: keep last pos for HOLD_FRAMES (anti-flicker)
+            if(te.hold>0){ te.hold--; te.valid = (te.hold>0); }
             else te.valid=false;
             if(!te.valid) continue;
-            origin = te.pos;
+            origin = te.pos; // draw with last known
         } else {
             if(fabsf(origin.x)>20000.f||fabsf(origin.y)>20000.f||fabsf(origin.z)>20000.f){ te.valid=false; continue; }
             if(fabsf(origin.x)<0.1f && fabsf(origin.y)<0.1f){ te.valid=false; continue; }
             if(origin.z < -500.f || origin.z > 500.f){ te.valid=false; continue; }
 
+            // static-frame corpse detection
             if(te.hasPrev){
                 float dx=origin.x-te.prev.x, dy=origin.y-te.prev.y, dz=origin.z-te.prev.z;
                 float d2=dx*dx+dy*dy+dz*dz;
