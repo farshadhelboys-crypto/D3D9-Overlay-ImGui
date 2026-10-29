@@ -58,7 +58,7 @@ static std::string HttpGetHttps(const wchar_t* host, const wchar_t* path) {
 }
 
 static uintptr_t JsonHex(const std::string& j, const char* key) {
-    std::string k = std::string("\")+key+"\"";
+    std::string k = std::string("\"")+key+"\"";
     size_t p=j.find(k); if(p==std::string::npos) return 0;
     p=j.find(':',p); if(p==std::string::npos) return 0;
     while(p<j.size()&&(j[p]==':'||j[p]==' '||j[p]=='\"')) p++;
