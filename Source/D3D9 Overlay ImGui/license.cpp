@@ -147,6 +147,8 @@ void SaveTg(const std::string& tg) {
     if (f) f << tg;
 }
 
+} // anon helpers
+
 std::string GetHWID() {
     if (!g_hwid.empty()) return g_hwid;
     DWORD serial = 0;
@@ -177,7 +179,7 @@ void SaveKey(const std::string& key) {
     if (f) f << key;
 }
 
-std::string MapError(const Status& st) {
+static std::string MapError(const Status& st) {
     if (!st.message.empty()) return st.message;
     if (st.error == "hwid_mismatch")
         return "This license is locked to another PC. Ask admin to Reset HWID.";
@@ -195,8 +197,6 @@ std::string MapError(const Status& st) {
     if (st.error.empty()) return "Activation failed";
     return "Error: " + st.error;
 }
-
-} // anon
 
 Status Activate(const std::string& key, const std::string& tgId) {
     Status st;
@@ -241,7 +241,6 @@ Status ActivateSaved() {
     return Activate(k, LoadTg());
 }
 
-// Heartbeat removed - burned free-tier KV puts every 5 min.
 Status Heartbeat() {
     Status st;
     st.ok = g_licensed;
