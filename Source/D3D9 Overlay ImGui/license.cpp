@@ -181,7 +181,7 @@ std::string MapError(const Status& st) {
     if (!st.message.empty()) return st.message;
     if (st.error == "hwid_mismatch")
         return "This license is locked to another PC. Ask admin to Reset HWID.";
-    if (st.error == "expired") return "License expired\n
+    if (st.error == "expired") return "License expired";
     if (st.error == "disabled") return "License disabled";
     if (st.error == "invalid_key") return "Invalid license key";
     if (st.error == "missing_fields") return "Key / HWID missing";
@@ -189,9 +189,9 @@ std::string MapError(const Status& st) {
         return "Please join the Telegram channel and enter your numeric ID";
     if (st.error == "network") return "Cannot reach license server";
     if (st.error == "server_misconfigured" || st.error == "internal_error" || st.error == "internal")
-        return "License server error (KV limit or misconfig — try later)";
+        return "License server error (KV limit or misconfig - try later)";
     if (st.error.find("429") != std::string::npos)
-        return "Server rate limit — try again later";
+        return "Server rate limit - try again later";
     if (st.error.empty()) return "Activation failed";
     return "Error: " + st.error;
 }
@@ -241,7 +241,7 @@ Status ActivateSaved() {
     return Activate(k, LoadTg());
 }
 
-// Heartbeat removed — burned free-tier KV puts every 5 min.
+// Heartbeat removed - burned free-tier KV puts every 5 min.
 Status Heartbeat() {
     Status st;
     st.ok = g_licensed;
@@ -298,7 +298,7 @@ bool DrawGateAndTick() {
             g_uiMsg = MapError(st);
         else
             g_uiMsg = st.days_left >= 0
-                ? ("OK — days left: " + std::to_string(st.days_left))
+                ? ("OK - days left: " + std::to_string(st.days_left))
                 : "OK";
     }
     ImGui::SameLine();
