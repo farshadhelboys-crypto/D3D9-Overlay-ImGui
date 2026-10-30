@@ -24,7 +24,6 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-// ---- Hardcoded working offsets (from proven Python) ----
 static const uintptr_t K_MATRIX_RVA   = 0x27603D0;
 static const uintptr_t K_MY_POS_X     = 0x242F510;
 static const uintptr_t K_MY_POS_Y     = 0x242F514;
@@ -32,20 +31,15 @@ static const uintptr_t K_MY_POS_Z     = 0x242F518;
 static const uintptr_t K_VTABLE_1     = 0x01DDAC3C;
 static const uintptr_t K_VTABLE_2     = 0x01DDA9C8;
 static const uintptr_t K_V_OBJ_ORIGIN = 0x538;
-static const uintptr_t K_PLAYER_RES   = 0x2478218;
-static const uintptr_t K_RES_HP       = 0x1270;
-static const uintptr_t K_RES_TEAM     = 0x1128;
 
-// ---- Tunables (match Python + less flicker) ----
 static const float  HEAD_OFFSET         = 72.f;
 static const float  MIN_DIST            = 80.f;
 static const float  MAX_DIST            = 5000.f;
 static const float  MIN_BOX_H           = 5.f;
 static const float  MAX_BOX_H           = 1500.f;
-static const int    DEAD_STATIC_FRAMES  = 300;   // ~5s static = corpse
-static const float  POS_EPS_SQ          = 16.f;  // 4 units movement threshold
-static const int    HOLD_FRAMES         = 12;    // anti-flicker (was 3 — too low)
-static const int    RES_UPDATE_EVERY    = 20;
+static const int    DEAD_STATIC_FRAMES  = 300;
+static const float  POS_EPS_SQ          = 16.f;
+static const int    HOLD_FRAMES         = 12;
 
 struct Offsets {
     uintptr_t MATRIX_RVA=K_MATRIX_RVA, VTABLE_1=K_VTABLE_1, VTABLE_2=K_VTABLE_2, V_OBJ_ORIGIN=K_V_OBJ_ORIGIN;
@@ -105,7 +99,41 @@ static uintptr_t GetModuleBase(DWORD pid,const wchar_t* mod){
     if(Module32FirstW(s,&me)){ do{ if(_wcsicmp(me.szModule,mod)==0){base=(uintptr_t)me.modBaseAddr;break;} }while(Module32NextW(s,&me)); }
     CloseHandle(s); return base;
 }
-static void EnsureOffsets(){ /* hardcoded, always ready */ Off.loaded=true; }
+
+static DWORD FindGamePidWithModule(){
+    const wchar_t* mods[] = { L"clientmod_game.dll", L"ClientMod_Game.dll", L"clientmod_game.DLL" };
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if(snap==INVALID_HANDLE_VALUE) return 0;
+    PROCESSENTRY32W pe{sizeof(pe)};
+    DWORD found=0;
+    if(Process32FirstW(snap,&pe)){
+        do{
+            bool nameOk = (_wcsicmp(pe.szExeFile,L"CMLauncher.exe")==0)
+                       || (_wcsicmp(pe.szExeFile,L"cmlauncher.exe")==0);
+            for(const wchar_t* m : mods){
+                uintptr_t b = GetModuleBase(pe.th32ProcessID, m);
+                if(b){
+                    if(nameOk){ found=pe.th32ProcessID; break; }
+                    if(!found) found=pe.th32ProcessID;
+                }
+            }
+            if(found && nameOk) break;
+        }while(Process32NextW(snap,&pe));
+    }
+    CloseHandle(snap);
+    return found;
+}
+
+static uintptr_t GetGameModuleBase(DWORD pid){
+    const wchar_t* mods[] = { L"clientmod_game.dll", L"ClientMod_Game.dll", L"clientmod_game.DLL" };
+    for(const wchar_t* m : mods){
+        uintptr_t b = GetModuleBase(pid, m);
+        if(b) return b;
+    }
+    return 0;
+}
+
+static void EnsureOffsets(){ Off.loaded=true; }
 
 static void Detach(){
     if(g_hProc){CloseHandle(g_hProc);g_hProc=nullptr;}
@@ -144,15 +172,30 @@ static void ScanVTableObjects(bool full_reset=false){
 
 static bool AttachFromUI(){
     Detach(); EnsureOffsets();
-    if(!UI::IsWindowTargeted()){strcpy_s(g_status,"No target window");return false;}
-    HWND hwnd=UI::GetTargetWindow(); DWORD pid=UI::GetTargetPID();
-    if(!pid&&hwnd) GetWindowThreadProcessId(hwnd,&pid);
-    if(!pid){strcpy_s(g_status,"Target PID invalid");return false;}
+    DWORD pid=0;
+    if(UI::IsWindowTargeted()){
+        HWND hwnd=UI::GetTargetWindow();
+        pid=UI::GetTargetPID();
+        if(!pid&&hwnd) GetWindowThreadProcessId(hwnd,&pid);
+    }
+    uintptr_t base=0;
+    if(pid) base=GetGameModuleBase(pid);
+    if(!base){
+        DWORD gp=FindGamePidWithModule();
+        if(gp){ pid=gp; base=GetGameModuleBase(pid); }
+    }
+    if(!pid){strcpy_s(g_status,"No game process (open CMLauncher)");return false;}
     g_hProc=OpenProcess(PROCESS_VM_READ|PROCESS_QUERY_INFORMATION,FALSE,pid);
-    if(!g_hProc){strcpy_s(g_status,"OpenProcess failed (run as admin)");return false;}
-    g_gameBase=GetModuleBase(pid,L"clientmod_game.dll");
-    if(!g_gameBase){strcpy_s(g_status,"Game module not loaded yet");CloseHandle(g_hProc);g_hProc=nullptr;return false;}
-    g_attachedPid=pid; strcpy_s(g_status,"Scanning players..."); ScanVTableObjects(true); return true;
+    if(!g_hProc){strcpy_s(g_status,"OpenProcess failed (run as ADMIN)");return false;}
+    if(!base){
+        sprintf_s(g_status,"Module not loaded (PID %lu) — enter match & Attach again", (unsigned long)pid);
+        CloseHandle(g_hProc); g_hProc=nullptr; return false;
+    }
+    g_gameBase=base;
+    g_attachedPid=pid;
+    sprintf_s(g_status,"OK PID=%lu base=0x%llX — scanning...", (unsigned long)pid, (unsigned long long)base);
+    ScanVTableObjects(true);
+    return true;
 }
 
 static void UpdateLocal(){
@@ -164,7 +207,6 @@ static void UpdateLocal(){
     }
 }
 
-// Exact same W2S as working Python
 static bool WorldToScreen(const Vec3& pos,const float* mat,float sw,float sh,Vec2& out){
     float cx=mat[0]*pos.x+mat[1]*pos.y+mat[2]*pos.z+mat[3];
     float cy=mat[4]*pos.x+mat[5]*pos.y+mat[6]*pos.z+mat[7];
@@ -209,24 +251,26 @@ void RenderESPMenu(){
             ImGui::Checkbox("Enable Aim Assist",&cfg.aimbot);
             ImGui::Separator();
             ImGui::TextDisabled("Activation");
-            ImGui::Checkbox("Aim on RMB (right click)",&cfg.aimOnRMB);
-            ImGui::Checkbox("Aim on LMB (left click)",&cfg.aimOnLMB);
-            ImGui::Checkbox("Aim on ALT (pull + autofire)",&cfg.aimOnAlt);
-            ImGui::Checkbox("Aim on ALT (aim only, no shoot)",&cfg.aimOnAltAimOnly);
+            ImGui::Checkbox("Aim on RMB",&cfg.aimOnRMB);
+            ImGui::Checkbox("Aim on LMB",&cfg.aimOnLMB);
+            ImGui::Checkbox("Aim on ALT (autofire)",&cfg.aimOnAlt);
+            ImGui::Checkbox("Aim on ALT (aim only)",&cfg.aimOnAltAimOnly);
             ImGui::Separator();
-            ImGui::SliderFloat("Smooth (RMB/LMB)",&cfg.aimSmooth,1.f,20.f,"%.1f");
+            ImGui::SliderFloat("Smooth",&cfg.aimSmooth,1.f,20.f,"%.1f");
             ImGui::SliderFloat("ALT Smooth",&cfg.aimAltSmooth,1.f,25.f,"%.1f");
-            ImGui::SliderFloat("ALT Precision (px)",&cfg.aimAltPrecision,1.f,40.f,"%.0f");
-            ImGui::SliderFloat("Fire Delay (ms)",&cfg.aimFireDelayMs,50.f,1000.f,"%.0f");
-            ImGui::SliderFloat("FOV (px)",&cfg.aimFov,0.f,600.f,"%.0f");
+            ImGui::SliderFloat("ALT Precision",&cfg.aimAltPrecision,1.f,40.f,"%.0f");
+            ImGui::SliderFloat("Fire Delay",&cfg.aimFireDelayMs,50.f,1000.f,"%.0f");
+            ImGui::SliderFloat("FOV",&cfg.aimFov,0.f,600.f,"%.0f");
             ImGui::EndTabItem();
         }
         if(ImGui::BeginTabItem("Status")){
             ImGui::Text("Connected: %s",g_hProc?"Yes":"No");
+            ImGui::Text("PID: %lu", (unsigned long)g_attachedPid);
+            ImGui::Text("Base: 0x%llX", (unsigned long long)g_gameBase);
             ImGui::Text("Local: %s",g_haveLocal?"Found":"Not found");
             ImGui::Text("Camera: %s",g_dbgVmOk?"OK":"Failed");
             ImGui::Text("Players: %d  Drawn: %d",g_dbgCount,g_dbgDrawn);
-            ImGui::Text("Objects scanned: %zu",g_rawObjects.size());
+            ImGui::Text("Objects: %zu",g_rawObjects.size());
             ImGui::EndTabItem();
         }
         if(ImGui::BeginTabItem("Contact")){
@@ -241,12 +285,9 @@ void RenderESPMenu(){
 
 void RenderESPBoxes(){
     EnsureOffsets();
-    if (GetAsyncKeyState(VK_F5) & 1) {
-        if (UI::IsWindowTargeted()) AttachFromUI();
-    }
-    if(UI::GetTargetWindow()!=g_lastTarget){
+    if (GetAsyncKeyState(VK_F5) & 1) AttachFromUI();
+    if(UI::IsWindowTargeted() && UI::GetTargetWindow()!=g_lastTarget){
         g_lastTarget=UI::GetTargetWindow();
-        Detach();
     }
     if(!g_hProc||!g_gameBase) return;
     UpdateLocal(); if(!cfg.enabled||!g_scanned) return;
@@ -272,25 +313,21 @@ void RenderESPBoxes(){
                && RPM(te.obj+Off.V_OBJ_ORIGIN+8,origin.z);
 
         if(!ok){
-            // lost read: keep last pos for HOLD_FRAMES (anti-flicker)
             if(te.hold>0){ te.hold--; te.valid = (te.hold>0); }
             else te.valid=false;
             if(!te.valid) continue;
-            origin = te.pos; // draw with last known
+            origin = te.pos;
         } else {
             if(fabsf(origin.x)>20000.f||fabsf(origin.y)>20000.f||fabsf(origin.z)>20000.f){ te.valid=false; continue; }
             if(fabsf(origin.x)<0.1f && fabsf(origin.y)<0.1f){ te.valid=false; continue; }
             if(origin.z < -500.f || origin.z > 500.f){ te.valid=false; continue; }
 
-            // static-frame corpse detection
             if(te.hasPrev){
                 float dx=origin.x-te.prev.x, dy=origin.y-te.prev.y, dz=origin.z-te.prev.z;
                 float d2=dx*dx+dy*dy+dz*dz;
                 if(d2 > POS_EPS_SQ) te.staticFrames = 0;
                 else te.staticFrames++;
-            } else {
-                te.staticFrames = 0;
-            }
+            } else te.staticFrames = 0;
             te.prev = origin;
             te.hasPrev = true;
 
@@ -327,14 +364,11 @@ void RenderESPBoxes(){
 
         float top_y = (feetS.y < headS.y) ? feetS.y : headS.y;
         float cx = (feetS.x + headS.x) * 0.5f;
-
         if(cx < -200.f || cx > sw+200.f || top_y < -200.f || top_y > sh+200.f) continue;
 
         ImU32 col = C(cfg.enemyColor);
         if(cfg.drawBox)
-            dl->AddRect(ImVec2(cx - box_w*0.5f, top_y),
-                        ImVec2(cx + box_w*0.5f, top_y + box_h),
-                        col, 0.f, 0, cfg.thickness);
+            dl->AddRect(ImVec2(cx - box_w*0.5f, top_y), ImVec2(cx + box_w*0.5f, top_y + box_h), col, 0.f, 0, cfg.thickness);
 
         if(cfg.drawDistance && dist >= 0.f){
             char b[32]; sprintf_s(b,"%.0fm",dist);
@@ -359,7 +393,6 @@ void RenderESPBoxes(){
         const bool rmb = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
         const bool lmb = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
         const bool alt = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
-
         const bool useRmb = cfg.aimOnRMB && rmb;
         const bool useLmb = cfg.aimOnLMB && lmb;
         const bool useAltFire = cfg.aimOnAlt && alt;
@@ -372,31 +405,23 @@ void RenderESPBoxes(){
             float cx = sw * 0.5f, cy = sh * 0.5f;
             float dx = bestX - cx, dy = bestY - cy;
             float dist = sqrtf(dx*dx + dy*dy);
-
             dl->AddLine(ImVec2(bestX-8,bestY),ImVec2(bestX+8,bestY),IM_COL32(0,255,0,230),1.5f);
             dl->AddLine(ImVec2(bestX,bestY-8),ImVec2(bestX,bestY+8),IM_COL32(0,255,0,230),1.5f);
-            dl->AddLine(ImVec2(cx,cy),ImVec2(bestX,bestY),IM_COL32(0,255,0,120),1.0f);
-
             float sm = useAlt ? cfg.aimAltSmooth : cfg.aimSmooth;
             if(sm < 1.f) sm = 1.f;
             float stepX = dx / sm, stepY = dy / sm;
             const float maxStep = 45.f;
-            if(stepX >  maxStep) stepX =  maxStep;
-            if(stepX < -maxStep) stepX = -maxStep;
-            if(stepY >  maxStep) stepY =  maxStep;
-            if(stepY < -maxStep) stepY = -maxStep;
-
+            if(stepX > maxStep) stepX = maxStep; if(stepX < -maxStep) stepX = -maxStep;
+            if(stepY > maxStep) stepY = maxStep; if(stepY < -maxStep) stepY = -maxStep;
             int mx = (int)(stepX >= 0 ? stepX + 0.5f : stepX - 0.5f);
             int my = (int)(stepY >= 0 ? stepY + 0.5f : stepY - 0.5f);
             if(!mx && fabsf(dx) > 1.5f) mx = dx > 0 ? 1 : -1;
             if(!my && fabsf(dy) > 1.5f) my = dy > 0 ? 1 : -1;
-
             if(mx || my){
                 INPUT in{}; in.type=INPUT_MOUSE;
                 in.mi.dx=mx; in.mi.dy=my; in.mi.dwFlags=MOUSEEVENTF_MOVE;
                 SendInput(1,&in,sizeof(INPUT));
             }
-
             if(useAltFire){
                 float prec = cfg.aimAltPrecision < 1.f ? 1.f : cfg.aimAltPrecision;
                 if(dist <= prec){
@@ -405,10 +430,8 @@ void RenderESPBoxes(){
                     if(now - g_lastAutoShot > delay){
                         g_lastAutoShot = now;
                         INPUT click[2]{};
-                        click[0].type = INPUT_MOUSE;
-                        click[0].mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
-                        click[1].type = INPUT_MOUSE;
-                        click[1].mi.dwFlags = MOUSEEVENTF_LEFTUP;
+                        click[0].type = INPUT_MOUSE; click[0].mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+                        click[1].type = INPUT_MOUSE; click[1].mi.dwFlags = MOUSEEVENTF_LEFTUP;
                         SendInput(2, click, sizeof(INPUT));
                     }
                 }
