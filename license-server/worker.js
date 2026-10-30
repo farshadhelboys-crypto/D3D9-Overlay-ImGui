@@ -8,7 +8,7 @@
  *   - Admin: create / enable / disable / reset HWID / extend
  *   - Optional Telegram channel membership (if env set)
  *   - Debug report from client → auto-disable key
- *   - English admin UI, no nested template bugs
+ *   - Minimize KV puts (free tier: 1000 writes/day)
  *
  *  Required Cloudflare setup:
  *   - KV binding variable name: KV
@@ -34,7 +34,6 @@ export default {
     }
 
     try {
-      // -------- Public API --------
       if (path === "/api/time" && request.method === "GET") {
         return json({ ok: true, server_time: now() }, cors);
       }
@@ -54,14 +53,16 @@ export default {
         return json(await apiReportDebug(env, await request.json()), cors);
       }
 
-      // -------- Admin API --------
       if (path.startsWith("/admin")) {
         const adminKey = request.headers.get("X-Admin-Key") || "";
         if (!env.ADMIN_KEY || adminKey !== env.ADMIN_KEY) {
           return json({ ok: false, error: "unauthorized" }, cors, 401);
         }
         if (!env.KV) {
-          return json({ ok: false, error: "KV not bound. In Worker Settings > Bindings, add KV named exactly: KV" }, cors, 500);
+          return json({
+            ok: false,
+            error: "KV not bound. In Worker Settings > Bindings, add KV named exactly: KV",
+          }, cors, 500);
         }
 
         if (path === "/admin/stats" && request.method === "GET")
@@ -86,7 +87,6 @@ export default {
         return json({ ok: false, error: "unknown_admin_route" }, cors, 404);
       }
 
-      // -------- Admin UI --------
       if (path === "/" || path === "/admin" || path === "/index.html") {
         return new Response(ADMIN_HTML, {
           headers: { ...cors, "Content-Type": "text/html; charset=utf-8" },
@@ -95,12 +95,15 @@ export default {
 
       return json({ ok: false, error: "not_found" }, cors, 404);
     } catch (e) {
-      return json({ ok: false, error: String(e && e.message ? e.message : e) }, cors, 500);
+      return json({
+        ok: false,
+        error: "internal_error",
+        message: String(e && e.message ? e.message : e),
+      }, cors, 500);
     }
   },
 };
 
-// ===================== helpers =====================
 function now() {
   return Math.floor(Date.now() / 1000);
 }
@@ -151,7 +154,7 @@ async function saveIndex(env, idx) {
 function statusOf(lic, t) {
   if (lic.disabled === true) return "disabled";
   if (lic.expires_at && t > Number(lic.expires_at)) return "expired";
-  if (!lic.hwid) return "unused"; // created, not activated yet
+  if (!lic.hwid) return "unused";
   return "active";
 }
 function daysLeft(lic, t) {
@@ -159,7 +162,6 @@ function daysLeft(lic, t) {
   return Math.max(0, Math.floor((Number(lic.expires_at) - t) / 86400));
 }
 
-// ===================== public API =====================
 async function checkTelegram(env, tgId) {
   if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHANNEL_ID) {
     return { required: false, ok: true };
@@ -226,7 +228,6 @@ async function apiActivate(env, body) {
     return { ok: false, error: "join_channel", message: tg.message };
   }
 
-  // HWID lock
   if (lic.hwid && lic.hwid !== hwid) {
     return {
       ok: false,
@@ -234,14 +235,27 @@ async function apiActivate(env, body) {
       message: "This license is locked to another PC. Ask admin to Reset HWID.",
     };
   }
+
+  // Only WRITE to KV when something actually changes (saves free-tier put quota).
+  // last_seen is NOT persisted on every activate.
+  let dirty = false;
   if (!lic.hwid) {
     lic.hwid = hwid;
     lic.activated_at = t;
+    dirty = true;
   }
-  if (tgId) lic.tg_id = tgId;
-  lic.disabled = false;
-  lic.last_seen = t;
-  await putLic(env, key, lic);
+  if (tgId && lic.tg_id !== tgId) {
+    lic.tg_id = tgId;
+    dirty = true;
+  }
+  const msgs = lic.pending_messages || [];
+  if (msgs.length) {
+    lic.pending_messages = [];
+    dirty = true;
+  }
+  if (dirty) {
+    await putLic(env, key, lic);
+  }
 
   return {
     ok: true,
@@ -249,7 +263,7 @@ async function apiActivate(env, body) {
     expires_at: lic.expires_at,
     days_left: daysLeft(lic, t),
     status: "active",
-    messages: lic.pending_messages || [],
+    messages: msgs,
   };
 }
 
@@ -272,10 +286,12 @@ async function apiHeartbeat(env, body) {
     return { ok: false, error: "hwid_mismatch" };
   }
 
-  lic.last_seen = t;
+  // Prefer no KV write on heartbeat (client should not call this on free tier).
   const msgs = lic.pending_messages || [];
-  lic.pending_messages = [];
-  await putLic(env, key, lic);
+  if (msgs.length) {
+    lic.pending_messages = [];
+    await putLic(env, key, lic);
+  }
 
   return {
     ok: true,
@@ -298,7 +314,6 @@ async function apiReportDebug(env, body) {
   return { ok: true, disabled: true };
 }
 
-// ===================== admin =====================
 async function adminCreate(env, body) {
   const days = Math.max(1, Number(body.days) || 30);
   const note = String(body.note || "");
@@ -337,7 +352,6 @@ async function adminCreate(env, body) {
     ok: true,
     count: created.length,
     licenses: created,
-    // single-create convenience (client panel expects license.key)
     license: created[0]
       ? {
           key: created[0].key,
@@ -463,7 +477,6 @@ async function adminList(env) {
       active: st === "active" || st === "unused",
     });
   }
-  // newest first
   list.sort(function (a, b) {
     return (b.created_at || 0) - (a.created_at || 0);
   });
@@ -494,7 +507,6 @@ async function adminStats(env) {
   };
 }
 
-// ===================== Admin HTML (English, no nested backticks) =====================
 const ADMIN_HTML =
   "<!DOCTYPE html>\n" +
   "<html lang=\"en\">\n<head>\n" +
@@ -541,42 +553,41 @@ const ADMIN_HTML =
   "<div class=\"card\">\n" +
   "  <h3>Message users</h3>\n" +
   "  Key (empty=all) <input id=\"mkey\" style=\"width:220px\"/>\n" +
-  "  Title <input id=\"mtitle\" value=\"Admin message\" style=\"width:180px\"/>\n" +
-  "  <textarea id=\"mbody\" rows=\"2\" style=\"width:100%\" placeholder=\"Message text\"></textarea>\n" +
+  "  Title <input id=\"mtitle\" style=\"width:160px\"/>\n" +
+  "  Body <input id=\"mbody\" style=\"width:280px\"/>\n" +
   "  <button type=\"button\" onclick=\"sendMsg(false)\">Send to key</button>\n" +
   "  <button type=\"button\" class=\"muted\" onclick=\"sendMsg(true)\">Broadcast</button>\n" +
   "</div>\n" +
   "<div class=\"card\">\n" +
-  "  <h3>All licenses</h3>\n" +
-  "  <div id=\"list\"></div>\n" +
+  "  <h3>Licenses</h3>\n" +
+  "  <div id=\"list\">—</div>\n" +
   "</div>\n" +
   "<script>\n" +
   "var api=location.origin;\n" +
   "function $(id){return document.getElementById(id);}\n" +
   "function headers(){return {'Content-Type':'application/json','X-Admin-Key':$('akey').value};}\n" +
-  "function showErr(m){$('err').textContent=m||'';}\n" +
-  "function tag(st){return '<span class=\"tag '+st+'\">'+st+'</span>';}\n" +
+  "function showErr(t){$('err').textContent=t||'';}\n" +
   "async function loadAll(){\n" +
   "  showErr('');\n" +
+  "  localStorage.setItem('fe_admin',$('akey').value);\n" +
   "  try{\n" +
-  "    localStorage.setItem('fe_admin',$('akey').value);\n" +
   "    var s=await fetch(api+'/admin/stats',{headers:headers()}).then(function(r){return r.json();});\n" +
-  "    if(!s.ok){showErr('Error: '+(s.error||JSON.stringify(s)));return;}\n" +
-  "    $('stats').innerHTML='Total: <b>'+s.total+'</b> &nbsp; Active: <b style=\"color:#6f6\">'+s.active+'</b> &nbsp; Unused: <b style=\"color:#8bf\">'+s.unused+'</b> &nbsp; Disabled: <b style=\"color:#f88\">'+s.disabled+'</b> &nbsp; Expired: <b style=\"color:#fc6\">'+s.expired+'</b>';\n" +
-  "    var l=await fetch(api+'/admin/list',{headers:headers()}).then(function(r){return r.json();});\n" +
-  "    if(!l.ok){$('list').textContent=JSON.stringify(l);return;}\n" +
-  "    var h='<table><tr><th>Key</th><th>Status</th><th>Days</th><th>HWID</th><th>Note / Reason</th><th>Actions</th></tr>';\n" +
-  "    for(var i=0;i<l.licenses.length;i++){\n" +
-  "      var x=l.licenses[i];\n" +
-  "      var hw=x.hwid||'-'; if(hw.length>16) hw=hw.slice(0,16)+'…';\n" +
-  "      var reason=(x.disable_reason||x.note||'');\n" +
-  "      h+='<tr><td><code>'+x.key+'</code> <button type=\"button\" class=\"muted\" onclick=\"copy(\\''+x.key+'\\')\">Copy</button></td>';\n" +
-  "      h+='<td>'+tag(x.status)+'</td><td>'+(x.days_left!=null?x.days_left:'-')+'</td><td>'+hw+'</td><td>'+reason+'</td><td>';\n" +
-  "      if(x.status==='disabled') h+='<button type=\"button\" class=\"ok\" onclick=\"en(\\''+x.key+'\\')\">Enable</button> ';\n" +
-  "      else h+='<button type=\"button\" class=\"danger\" onclick=\"dis(\\''+x.key+'\\')\">Disable</button> ';\n" +
-  "      h+='<button type=\"button\" class=\"muted\" onclick=\"rst(\\''+x.key+'\\')\">Reset HWID</button> ';\n" +
-  "      h+='<button type=\"button\" class=\"muted\" onclick=\"ext(\\''+x.key+'\\')\">+30d</button> ';\n" +
-  "      h+='<button type=\"button\" class=\"danger\" onclick=\"del(\\''+x.key+'\\')\">Delete</button>';\n" +
+  "    if(!s.ok){showErr(s.error||'auth failed');return;}\n" +
+  "    $('stats').innerHTML='Total: '+s.total+' | Active: '+s.active+' | Unused: '+s.unused+' | Disabled: '+s.disabled+' | Expired: '+s.expired;\n" +
+  "    var j=await fetch(api+'/admin/list',{headers:headers()}).then(function(r){return r.json();});\n" +
+  "    var h='<table><tr><th>Key</th><th>Status</th><th>Days</th><th>HWID</th><th>Note</th><th>Actions</th></tr>';\n" +
+  "    for(var i=0;i<j.licenses.length;i++){\n" +
+  "      var x=j.licenses[i];\n" +
+  "      h+='<tr><td><code>'+x.key+'</code> <button type=\"button\" class=\"muted\" onclick=\"copy(\\'+x.key+'\\')\">Copy</button></td>';\n" +
+  "      h+='<td><span class=\"tag '+x.status+'\">'+x.status+'</span></td>';\n" +
+  "      h+='<td>'+(x.days_left==null?'—':x.days_left)+'</td>';\n" +
+  "      h+='<td style=\"max-width:140px;overflow:hidden;text-overflow:ellipsis\">'+(x.hwid||'—')+'</td>';\n" +
+  "      h+='<td>'+(x.note||'')+'</td><td>';\n" +
+  "      h+='<button type=\"button\" class=\"ok\" onclick=\"en(\\'+x.key+'\\')\">Enable</button> ';\n" +
+  "      h+='<button type=\"button\" class=\"danger\" onclick=\"dis(\\'+x.key+'\\')\">Disable</button> ';\n" +
+  "      h+='<button type=\"button\" class=\"muted\" onclick=\"rst(\\'+x.key+'\\')\">Reset HWID</button> ';\n" +
+  "      h+='<button type=\"button\" onclick=\"ext(\\'+x.key+'\\')\">+30d</button> ';\n" +
+  "      h+='<button type=\"button\" class=\"danger\" onclick=\"del(\\'+x.key+'\\')\">Delete</button>';\n" +
   "      h+='</td></tr>';\n" +
   "    }\n" +
   "    h+='</table>';\n" +
