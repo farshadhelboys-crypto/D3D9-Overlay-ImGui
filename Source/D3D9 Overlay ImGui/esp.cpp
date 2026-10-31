@@ -233,7 +233,7 @@ static bool AttachFromUI(){
     }
     g_gameBase=base;
     g_attachedPid=pid;
-    sprintf_s(g_status,"OK PID=%lu base=0x%llX — scanning...", (unsigned long)pid, (unsigned long long)base);
+    sprintf_s(g_status,"OK — scanning...");
     ScanVTableObjects(true);
     return true;
 }
@@ -265,13 +265,12 @@ void RenderESPMenu(){
     if(!UI::IsWindowTargeted())return; EnsureOffsets();
     ImGui::SetNextWindowSize(ImVec2(360,440),ImGuiCond_FirstUseEver);
     if(!ImGui::Begin("farshad pm Esp",nullptr,ImGuiWindowFlags_NoCollapse|ImGuiWindowFlags_AlwaysVerticalScrollbar)){ImGui::End();return;}
-    ImGui::TextColored(ImVec4(0.4f,0.85f,1.f,1.f),"farshad pm Esp"); ImGui::SameLine(); ImGui::TextDisabled("move-only");
+    ImGui::TextColored(ImVec4(0.4f,0.85f,1.f,1.f),"farshad pm Esp");
     ImGui::Separator();
     ImGui::Checkbox("Enable ESP",&cfg.enabled); ImGui::SameLine();
     if(ImGui::Button("Attach")) AttachFromUI();
     ImGui::SameLine(); ImGui::TextDisabled("F5 = Attach/Rescan");
     ImGui::TextColored(ImVec4(0.5f,1.f,0.5f,1.f),"%s",g_status);
-    ImGui::TextDisabled("Matrix: 0x27603D0 | Move-only | Hold: 12");
     ImGui::Separator();
     if(ImGui::BeginTabBar("tabs")){
         if(ImGui::BeginTabItem("Main")){
@@ -306,7 +305,6 @@ void RenderESPMenu(){
         if(ImGui::BeginTabItem("Status")){
             ImGui::Text("Connected: %s",g_hProc?"Yes":"No");
             ImGui::Text("PID: %lu", (unsigned long)g_attachedPid);
-            ImGui::Text("Base: 0x%llX", (unsigned long long)g_gameBase);
             ImGui::Text("Local: %s",g_haveLocal?"Found":"Not found");
             ImGui::Text("Camera: %s",g_dbgVmOk?"OK":"Failed");
             ImGui::Text("Players: %d  Drawn: %d",g_dbgCount,g_dbgDrawn);
